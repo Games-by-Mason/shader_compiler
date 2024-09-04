@@ -1,0 +1,21 @@
+.{
+    .name = "shader_compiler",
+    .version = "0.0.0",
+    .dependencies = .{
+        .glslang = .{
+            .url = "https://github.com/Games-by-Mason/glslang-zig/archive/af4f26fcb2abb3e43f8794eb58df3289ab3b842b.tar.gz",
+            .hash = "1220d8a973a82dc73994c611172c007155aa1938be78f672f003a30c7dca057e3fff",
+        },
+        .structopt = .{
+            .url = "https://github.com/Games-by-Mason/structopt/archive/cf3043279d9c487df5d959c77213b671257da27f.tar.gz",
+            .hash = "1220c0beaa95ec47509dae96b4b29bcd5ed229f2e60b8b86bb3b41b32f477c1c6d5f",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}
