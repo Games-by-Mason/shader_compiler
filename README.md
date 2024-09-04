@@ -8,6 +8,11 @@ Remap is also supported (results in better compression), SPIRV is validated befo
 
 Note that the initial compile will take quite while as it's building the shader C++ implementation of the shader compiler. Once this finishes it will be cached.
 
+Example usage:
+```sh
+zig build run -- --target Vulkan-1.3 --optimize-perf input.glsl output.spv
+```
+
 Example usage from Zig's build system:
 
 ```zig
