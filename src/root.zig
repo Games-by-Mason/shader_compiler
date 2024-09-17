@@ -1,7 +1,7 @@
 const std = @import("std");
 const structopt = @import("structopt");
 const log = std.log.scoped(.shader_compiler);
-const c = @import("c.zig");
+const c = @import("c.zig").c;
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
