@@ -200,7 +200,7 @@ fn compile(
     } else null;
     defer if (user_include_dir) |*d| d.close();
 
-    const callback_ctx: CallbackCtx = .{
+    var callback_ctx: CallbackCtx = .{
         .gpa = gpa,
         .system_include_dir = system_include_dir,
         .user_include_dir = user_include_dir,
@@ -254,7 +254,7 @@ fn compile(
             .include_local = &includeLocal,
             .free_include_result = &freeIncludeResult,
         },
-        .callbacks_ctx = @ptrCast(@constCast(&callback_ctx)),
+        .callbacks_ctx = @ptrCast(&callback_ctx),
     };
 
     const shader = c.glslang_shader_create(&input) orelse @panic("OOM");
@@ -465,6 +465,7 @@ const CallbackCtx = struct {
     gpa: std.mem.Allocator,
     system_include_dir: ?Dir,
     user_include_dir: ?Dir,
+    include_path_missing_err: bool = false,
 };
 
 fn cppPanic(message: []const u8) noreturn {
@@ -541,7 +542,12 @@ fn includeSystem(
     includer_name: [*c]const u8,
     depth: usize,
 ) callconv(.C) ?*c.glsl_include_result_t {
-    const ctx: *const CallbackCtx = @ptrCast(@alignCast(ctx_c));
+    const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
+    if (!ctx.include_path_missing_err and ctx.user_include_dir == null) {
+        ctx.include_path_missing_err = true;
+        log.err("user-include-path/sys-include-path not set", .{});
+        return null;
+    }
     return includeMaybeRelative(
         ctx.gpa,
         ctx.system_include_dir,
@@ -557,7 +563,12 @@ fn includeLocal(
     includer_name: [*c]const u8,
     depth: usize,
 ) callconv(.C) ?*c.glsl_include_result_t {
-    const ctx: *const CallbackCtx = @ptrCast(@alignCast(ctx_c));
+    const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
+    if (!ctx.include_path_missing_err and ctx.system_include_dir == null) {
+        ctx.include_path_missing_err = true;
+        log.err("user-include-path not set", .{});
+        return null;
+    }
     return includeMaybeRelative(
         ctx.gpa,
         ctx.user_include_dir,

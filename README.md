@@ -44,6 +44,9 @@ return compile_shader.addOutputFileArg("compiled.spv");
 
 WIP:
 * Understand how system vs user paths work
+    * Sys: searches sys, then user
+    * User: searches user
+* Allow setting more than one path? (would need to make array args in structopt, may be useful!)
 * Write up instructions here
-* More helpful error if neither path is set and include is attempted?
 * Test in engine
+* Consider updating deps
