@@ -519,6 +519,7 @@ fn includeMaybeRelative(
 
     // Make sure we're not escaping the given directory
     const rel = std.fs.path.relative(gpa, current_path, relpath) catch |err| cppPanic(@errorName(err));
+    defer gpa.free(rel);
     if (std.mem.startsWith(u8, rel, "..")) {
         log.err("{s}: include escapes include directory", .{rel});
         return null;
