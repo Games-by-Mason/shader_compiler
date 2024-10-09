@@ -40,13 +40,37 @@ compile_shader.addFileArg(b.path(path));
 return compile_shader.addOutputFileArg("compiled.spv");
 ```
 
-# GL_ARB_shading_language_include
+# `GL_ARB_shading_language_include`
+
+glslang supports the [`GL_ARB_shading_language_include`](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_shading_language_include.txt) extension. You can enable it in your shaders like this:
+
+```glsl
+#extension GL_ARB_shading_language_include : require
+```
+
+Once enabled, the shader compiler supports preprocessor include:
+
+```glsl
+#include "foo.glsl" // Searches the user include path, then the system include path
+#include <bar/baz.glsl> // Just searches the system include path
+```
+
+To use this feature, you must set the user and system include paths with "--user-include-path" and "--system-include-path".
+
+Command line:
+```
+zig build run -- --target Vulkan-1.3 --user-include-path user --system-include-path system shader.vert shader.spv
+```
+
+Zig build system:
+```zig
+compile_shader.addArg("--user-include-path");
+compile_shader.addDirectoryArg(b.path("user"));
+compile_shader.addArg("--system-include-path");
+compile_shader.addDirectoryArg(b.path("system"));
+```
 
 WIP:
-* Understand how system vs user paths work
-    * Sys: searches sys, then user
-    * User: searches user
 * Allow setting more than one path? (would need to make array args in structopt, may be useful!)
-* Write up instructions here
 * Test in engine
 * Consider updating deps
