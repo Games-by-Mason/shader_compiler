@@ -43,7 +43,8 @@ return compile_shader.addOutputFileArg("compiled.spv");
 # GL_ARB_shading_language_include
 
 WIP:
-* Reuse readSource or such, maybe clean up/remove progress nodes
-* We heap alloc the included files, may as well do the same with the normal ones
+* Maybe clean up and/or remove progress nodes, don't make as much sense now
+* Understand how system vs user paths work
 * Write up instructions here
 * More helpful error if neither path is set and include is attempted?
+* Test in engine

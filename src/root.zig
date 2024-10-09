@@ -120,8 +120,8 @@ pub fn main() void {
     if (c.glslang_initialize_process() == c.false) @panic("glslang_initialize_process failed");
     defer c.glslang_finalize_process();
 
-    var buf: [max_file_len]u8 = undefined;
-    const source = readSource(progress, cwd, args.INPUT, &buf);
+    const source = readSource(allocator, progress, cwd, args.INPUT);
+    defer allocator.free(source);
 
     const compiled = compile(allocator, progress, source, args);
     defer allocator.free(compiled);
@@ -138,7 +138,12 @@ pub fn main() void {
     std.process.cleanExit();
 }
 
-fn readSource(progress: ProgressNode, dir: std.fs.Dir, path: []const u8, buf: []u8) [:0]const u8 {
+fn readSource(
+    gpa: Allocator,
+    progress: ProgressNode,
+    dir: std.fs.Dir,
+    path: []const u8,
+) [:0]const u8 {
     const node = progress.start("reading source", 0);
     defer node.end();
 
@@ -148,12 +153,10 @@ fn readSource(progress: ProgressNode, dir: std.fs.Dir, path: []const u8, buf: []
     };
     defer file.close();
 
-    const size = file.readAll(buf[0 .. buf.len - 1]) catch |err| {
+    return file.readToEndAllocOptions(gpa, max_file_len, null, 1, 0) catch |err| {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         std.process.exit(1);
     };
-    buf[size] = 0;
-    return @ptrCast(buf[0..size]);
 }
 
 fn compile(
