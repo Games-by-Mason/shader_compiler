@@ -491,6 +491,12 @@ const CallbackCtx = struct {
     user_include_dir: ?Dir,
 };
 
+fn cppPanic(message: []const u8) noreturn {
+    log.err("panic in callback: {s}", .{message});
+    std.debug.lockStdErr();
+    std.process.exit(2);
+}
+
 fn include(
     gpa: Allocator,
     dir: Dir,
@@ -506,9 +512,9 @@ fn include(
         },
     };
     defer file.close();
-    const source = file.readToEndAllocOptions(gpa, max_file_len, null, 1, 0) catch @panic("OOM");
-    const result = gpa.create(c.glsl_include_result_t) catch @panic("OOM");
-    const header_name = gpa.dupeZ(u8, path) catch @panic("OOM");
+    const source = file.readToEndAllocOptions(gpa, max_file_len, null, 1, 0) catch cppPanic("OOM");
+    const result = gpa.create(c.glsl_include_result_t) catch cppPanic("OOM");
+    const header_name = gpa.dupeZ(u8, path) catch cppPanic("OOM");
     result.* = .{
         .header_name = header_name.ptr,
         .header_data = source.ptr,
@@ -532,7 +538,7 @@ fn includeMaybeRelative(
     const dir = maybe_dir orelse return null;
     const current_path = std.fs.path.dirname(includer_name) orelse "";
     const relpath = std.fs.path.join(gpa, &.{ current_path, header_name }) catch |err| switch (err) {
-        error.OutOfMemory => @panic("OOM"),
+        error.OutOfMemory => cppPanic("OOM"),
     };
     defer gpa.free(relpath);
 
