@@ -10,6 +10,7 @@ const PositionalArg = structopt.PositionalArg;
 const NamedArg = structopt.NamedArg;
 const Progress = std.Progress;
 const ProgressNode = std.Progress.Node;
+const Dir = std.fs.Dir;
 
 pub const std_options = .{
     .logFn = logFn,
@@ -70,6 +71,14 @@ const command: Command = .{
             .long = "preserve-spec-constants",
             .default = .{ .value = false },
         }),
+        NamedArg.init(?[]const u8, .{
+            .long = "system-include-path",
+            .default = .{ .value = null },
+        }),
+        NamedArg.init(?[]const u8, .{
+            .long = "user-include-path",
+            .default = .{ .value = null },
+        }),
     },
     .positional_args = &.{
         PositionalArg.init([]const u8, .{
@@ -81,10 +90,13 @@ const command: Command = .{
     },
 };
 
+const max_file_len = 400000;
+const max_include_depth = 255;
+
 pub fn main() void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
     defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    const allocator: std.mem.Allocator = gpa.allocator();
 
     var arg_iter = std.process.argsWithAllocator(allocator) catch @panic("OOM");
     defer arg_iter.deinit();
@@ -108,10 +120,10 @@ pub fn main() void {
     if (c.glslang_initialize_process() == c.false) @panic("glslang_initialize_process failed");
     defer c.glslang_finalize_process();
 
-    var buf: [400000]u8 = undefined;
+    var buf: [max_file_len]u8 = undefined;
     const source = readSource(progress, cwd, args.INPUT, &buf);
 
-    const compiled = compile(progress, args.INPUT, source, args.target, args.@"spirv-version", allocator);
+    const compiled = compile(allocator, progress, source, args);
     defer allocator.free(compiled);
 
     const optimized = optimize(progress, compiled, args);
@@ -145,15 +157,15 @@ fn readSource(progress: ProgressNode, dir: std.fs.Dir, path: []const u8, buf: []
 }
 
 fn compile(
-    progress: ProgressNode,
-    path: []const u8,
-    source: [*:0]const u8,
-    target: Target,
-    spirv_version: SpirvVersion,
     gpa: Allocator,
+    progress: ProgressNode,
+    source: [*:0]const u8,
+    args: command.Result(),
 ) []u32 {
     const node = progress.start("compiling", 0);
     defer node.end();
+
+    const cwd = std.fs.cwd();
 
     const stage = b: {
         const stages = std.StaticStringMap(c_uint).initComptime(.{
@@ -172,22 +184,43 @@ fn compile(
             .{ ".task", c.GLSLANG_STAGE_TASK },
             .{ ".mesh", c.GLSLANG_STAGE_MESH },
         });
-        const period = std.mem.lastIndexOfScalar(u8, path, '.') orelse {
-            log.err("{s}: shader missing extension", .{path});
+        const period = std.mem.lastIndexOfScalar(u8, args.INPUT, '.') orelse {
+            log.err("{s}: shader missing extension", .{args.INPUT});
             std.process.exit(1);
         };
-        const extension = path[period..];
+        const extension = args.INPUT[period..];
         const stage = stages.get(extension) orelse {
-            log.err("{s}: unknown extension", .{path});
+            log.err("{s}: unknown extension", .{args.INPUT});
             std.process.exit(1);
         };
         break :b stage;
     };
 
+    var system_include_dir = if (args.@"system-include-path") |p| b: {
+        break :b cwd.openDir(p, .{}) catch |err| {
+            log.err("system-include-path: {s}: {}", .{ p, err });
+            std.process.exit(1);
+        };
+    } else null;
+    defer if (system_include_dir) |*d| d.close();
+
+    var user_include_dir = if (args.@"user-include-path") |p| b: {
+        break :b cwd.openDir(p, .{}) catch |err| {
+            log.err("user-include-path: {s}: {}", .{ p, err });
+            std.process.exit(1);
+        };
+    } else null;
+    defer if (user_include_dir) |*d| d.close();
+
+    const callback_ctx: CallbackCtx = .{
+        .gpa = gpa,
+        .system_include_dir = system_include_dir,
+        .user_include_dir = user_include_dir,
+    };
     const input: c.glslang_input_t = .{
         .language = c.GLSLANG_SOURCE_GLSL,
         .stage = stage,
-        .client = switch (target) {
+        .client = switch (args.target) {
             .@"Vulkan-1.0",
             .@"Vulkan-1.1",
             .@"Vulkan-1.2",
@@ -195,7 +228,7 @@ fn compile(
             => c.GLSLANG_CLIENT_VULKAN,
             .@"OpenGL-4.5" => c.GLSLANG_CLIENT_OPENGL,
         },
-        .client_version = switch (target) {
+        .client_version = switch (args.target) {
             .@"Vulkan-1.0" => c.GLSLANG_TARGET_VULKAN_1_0,
             .@"Vulkan-1.1" => c.GLSLANG_TARGET_VULKAN_1_1,
             .@"Vulkan-1.2" => c.GLSLANG_TARGET_VULKAN_1_2,
@@ -203,8 +236,8 @@ fn compile(
             .@"OpenGL-4.5" => c.GLSLANG_TARGET_OPENGL_450,
         },
         .target_language = c.GLSLANG_TARGET_SPV,
-        .target_language_version = switch (spirv_version) {
-            .default => switch (target) {
+        .target_language_version = switch (args.@"spirv-version") {
+            .default => switch (args.target) {
                 .@"Vulkan-1.0" => c.GLSLANG_TARGET_SPV_1_0,
                 .@"Vulkan-1.1" => c.GLSLANG_TARGET_SPV_1_3,
                 .@"Vulkan-1.2" => c.GLSLANG_TARGET_SPV_1_5,
@@ -228,17 +261,23 @@ fn compile(
         .forward_compatible = c.false,
         .messages = c.GLSLANG_MSG_DEFAULT_BIT,
         .resource = c.glslang_default_resource(),
+        .callbacks = .{
+            .include_system = &includeSystem,
+            .include_local = &includeLocal,
+            .free_include_result = &freeIncludeResult,
+        },
+        .callbacks_ctx = @ptrCast(@constCast(&callback_ctx)),
     };
 
     const shader = c.glslang_shader_create(&input) orelse @panic("OOM");
     defer c.glslang_shader_delete(shader);
 
     if (c.glslang_shader_preprocess(shader, &input) == c.false) {
-        compilationFailed(shader, "preprocessing", path);
+        compilationFailed(shader, "preprocessing", args.INPUT);
     }
 
     if (c.glslang_shader_parse(shader, &input) == c.false) {
-        compilationFailed(shader, "parsing", path);
+        compilationFailed(shader, "parsing", args.INPUT);
     }
 
     const program: *c.glslang_program_t = c.glslang_program_create() orelse @panic("OOM");
@@ -250,7 +289,7 @@ fn compile(
         program,
         c.GLSLANG_MSG_SPV_RULES_BIT | c.GLSLANG_MSG_VULKAN_RULES_BIT,
     ) == c.false) {
-        compilationFailed(shader, "linking", path);
+        compilationFailed(shader, "linking", args.INPUT);
     }
 
     c.glslang_program_SPIRV_generate(program, stage);
@@ -261,7 +300,7 @@ fn compile(
     c.glslang_program_SPIRV_get(program, buf.ptr);
 
     if (c.glslang_program_SPIRV_get_messages(program)) |msgs| {
-        writeGlslMessages(log.info, path, msgs);
+        writeGlslMessages(log.info, args.INPUT, msgs);
     }
 
     return buf[0..size];
@@ -444,4 +483,108 @@ fn logFn(
         writer.writeAll(reset) catch return;
         bw.flush() catch return;
     }
+}
+
+const CallbackCtx = struct {
+    gpa: std.mem.Allocator,
+    system_include_dir: ?Dir,
+    user_include_dir: ?Dir,
+};
+
+fn include(
+    gpa: Allocator,
+    dir: Dir,
+    path: []const u8,
+) ?*c.glsl_include_result_t {
+    const file = dir.openFile(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => {
+            return null;
+        },
+        else => {
+            log.err("{s}: {s}", .{ path, @errorName(err) });
+            std.process.exit(1);
+        },
+    };
+    defer file.close();
+    const source = file.readToEndAllocOptions(gpa, max_file_len, null, 1, 0) catch @panic("OOM");
+    const result = gpa.create(c.glsl_include_result_t) catch @panic("OOM");
+    const header_name = gpa.dupeZ(u8, path) catch @panic("OOM");
+    result.* = .{
+        .header_name = header_name.ptr,
+        .header_data = source.ptr,
+        .header_length = source.len,
+    };
+    return result;
+}
+
+fn includeMaybeRelative(
+    gpa: Allocator,
+    maybe_dir: ?Dir,
+    header_name: []const u8,
+    includer_name: []const u8,
+    depth: usize,
+) ?*c.glsl_include_result_t {
+    if (depth > max_include_depth) {
+        log.err("exceeded max include depth: {}", .{max_include_depth});
+        std.process.exit(1);
+    }
+
+    const dir = maybe_dir orelse return null;
+    const current_path = std.fs.path.dirname(includer_name) orelse "";
+    const relpath = std.fs.path.join(gpa, &.{ current_path, header_name }) catch |err| switch (err) {
+        error.OutOfMemory => @panic("OOM"),
+    };
+    defer gpa.free(relpath);
+
+    // First try to include relative to the current path
+    if (include(gpa, dir, relpath)) |result| {
+        return result;
+    }
+
+    // Then try including relative to the include directory
+    return include(gpa, dir, header_name);
+}
+
+fn includeSystem(
+    ctx_c: ?*anyopaque,
+    header_name: [*c]const u8,
+    includer_name: [*c]const u8,
+    depth: usize,
+) callconv(.C) ?*c.glsl_include_result_t {
+    const ctx: *const CallbackCtx = @ptrCast(@alignCast(ctx_c));
+    return includeMaybeRelative(
+        ctx.gpa,
+        ctx.system_include_dir,
+        std.mem.span(header_name),
+        std.mem.span(includer_name),
+        depth,
+    );
+}
+
+fn includeLocal(
+    ctx_c: ?*anyopaque,
+    header_name: [*c]const u8,
+    includer_name: [*c]const u8,
+    depth: usize,
+) callconv(.C) ?*c.glsl_include_result_t {
+    const ctx: *const CallbackCtx = @ptrCast(@alignCast(ctx_c));
+    return includeMaybeRelative(
+        ctx.gpa,
+        ctx.user_include_dir,
+        std.mem.span(header_name),
+        std.mem.span(includer_name),
+        depth,
+    );
+}
+
+fn freeIncludeResult(
+    ctx_c: ?*anyopaque,
+    results: [*c]c.glsl_include_result_t,
+) callconv(.C) c_int {
+    const ctx: *const CallbackCtx = @ptrCast(@alignCast(ctx_c));
+    const result = &results[0];
+    ctx.gpa.free(@as([:0]const u8, @ptrCast(result.header_data[0..result.header_length])));
+    ctx.gpa.free(std.mem.span(result.header_name));
+    ctx.gpa.destroy(result);
+    return 0;
 }
