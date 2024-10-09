@@ -17,7 +17,6 @@ Example usage from Zig's build system:
 
 ```zig
 const compile_shader = b.addRunArtifact(shader_compiler_exe);
-compile_shader.setName(b.fmt("compile ({s})", .{path}));
 compile_shader.addArgs(&.{
     "--target", "Vulkan-1.3",
 });
