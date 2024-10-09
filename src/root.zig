@@ -8,8 +8,6 @@ const Allocator = std.mem.Allocator;
 const Command = structopt.Command;
 const PositionalArg = structopt.PositionalArg;
 const NamedArg = structopt.NamedArg;
-const Progress = std.Progress;
-const ProgressNode = std.Progress.Node;
 const Dir = std.fs.Dir;
 
 pub const std_options = .{
@@ -112,41 +110,32 @@ pub fn main() void {
     estimated_total_items += 1; // Validate
     estimated_total_items += 1; // Write
 
-    const progress = Progress.start(.{
-        .estimated_total_items = estimated_total_items,
-    });
-    defer progress.end();
-
     if (c.glslang_initialize_process() == c.false) @panic("glslang_initialize_process failed");
     defer c.glslang_finalize_process();
 
-    const source = readSource(allocator, progress, cwd, args.INPUT);
+    const source = readSource(allocator, cwd, args.INPUT);
     defer allocator.free(source);
 
-    const compiled = compile(allocator, progress, source, args);
+    const compiled = compile(allocator, source, args);
     defer allocator.free(compiled);
 
-    const optimized = optimize(progress, compiled, args);
+    const optimized = optimize(compiled, args);
     defer optimizeFree(optimized);
 
-    const remapped = if (args.remap) remap(progress, optimized) else compiled;
+    const remapped = if (args.remap) remap(optimized) else compiled;
 
-    validate(progress, args.INPUT, remapped, args.target);
+    validate(args.INPUT, remapped, args.target);
 
-    writeSpirv(progress, cwd, args.OUTPUT, remapped);
+    writeSpirv(cwd, args.OUTPUT, remapped);
 
     std.process.cleanExit();
 }
 
 fn readSource(
     gpa: Allocator,
-    progress: ProgressNode,
     dir: std.fs.Dir,
     path: []const u8,
 ) [:0]const u8 {
-    const node = progress.start("reading source", 0);
-    defer node.end();
-
     var file = dir.openFile(path, .{}) catch |err| {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         std.process.exit(1);
@@ -161,13 +150,9 @@ fn readSource(
 
 fn compile(
     gpa: Allocator,
-    progress: ProgressNode,
     source: [*:0]const u8,
     args: command.Result(),
 ) []u32 {
-    const node = progress.start("compiling", 0);
-    defer node.end();
-
     const cwd = std.fs.cwd();
 
     const stage = b: {
@@ -309,10 +294,7 @@ fn compile(
     return buf[0..size];
 }
 
-fn optimize(progress: ProgressNode, spirv: []u32, args: command.Result()) []u32 {
-    const node = progress.start("optimize", 0);
-    defer node.end();
-
+fn optimize(spirv: []u32, args: command.Result()) []u32 {
     // Set the options
     const options = c.spvOptimizerOptionsCreate() orelse @panic("OOM");
     defer c.spvOptimizerOptionsDestroy(options);
@@ -345,19 +327,13 @@ fn optimizeFree(code: []u32) void {
     c.free(code.ptr);
 }
 
-fn remap(progress: ProgressNode, spirv: []u32) []u32 {
-    const node = progress.start("remap", 0);
-    defer node.end();
-
+fn remap(spirv: []u32) []u32 {
     var len = spirv.len;
     if (c.glslang_remap(spirv.ptr, &len) == false) @panic("remap failed");
     return spirv[0..len];
 }
 
-fn validate(progress: ProgressNode, path: []const u8, spirv: []u32, target: Target) void {
-    const node = progress.start("validating", 0);
-    defer node.end();
-
+fn validate(path: []const u8, spirv: []u32, target: Target) void {
     const spirv_context = c.spvContextCreate(@intFromEnum(target));
     defer c.spvContextDestroy(spirv_context);
     var spirv_binary: c.spv_const_binary_t = .{
@@ -393,10 +369,7 @@ fn validate(progress: ProgressNode, path: []const u8, spirv: []u32, target: Targ
     }
 }
 
-fn writeSpirv(progress: ProgressNode, dir: std.fs.Dir, path: []const u8, spirv: []const u32) void {
-    const node = progress.start("writing", 0);
-    defer node.end();
-
+fn writeSpirv(dir: std.fs.Dir, path: []const u8, spirv: []const u32) void {
     var file = dir.createFile(path, .{}) catch |err| {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         std.process.exit(1);
