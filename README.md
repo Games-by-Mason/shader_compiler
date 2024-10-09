@@ -55,7 +55,7 @@ Once enabled, the shader compiler supports preprocessor include:
 #include <bar/baz.glsl> // Just searches the system include path
 ```
 
-To use this feature, you must set the user and system include paths with "--user-include-path" and "--system-include-path".
+To use this feature, you must set the user and system include paths with "--user-include-path" and "--system-include-path". These arguments accumulate, if you set them multiple times earlier paths are searched first.
 
 Command line:
 ```
@@ -71,6 +71,6 @@ compile_shader.addDirectoryArg(b.path("system"));
 ```
 
 WIP:
-* Allow setting more than one path? (would need to make array args in structopt, may be useful!)
 * Test in engine
 * Consider updating deps
+* Does the relative search work correctly? What if you're not in that particular folder?

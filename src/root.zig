@@ -5,6 +5,7 @@ const c = @import("c.zig");
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
 const Command = structopt.Command;
 const PositionalArg = structopt.PositionalArg;
 const NamedArg = structopt.NamedArg;
@@ -69,13 +70,11 @@ const command: Command = .{
             .long = "preserve-spec-constants",
             .default = .{ .value = false },
         }),
-        NamedArg.init(?[]const u8, .{
+        NamedArg.initAccum([]const u8, .{
             .long = "system-include-path",
-            .default = .{ .value = null },
         }),
-        NamedArg.init(?[]const u8, .{
+        NamedArg.initAccum([]const u8, .{
             .long = "user-include-path",
-            .default = .{ .value = null },
         }),
     },
     .positional_args = &.{
@@ -98,7 +97,8 @@ pub fn main() void {
 
     var arg_iter = std.process.argsWithAllocator(allocator) catch @panic("OOM");
     defer arg_iter.deinit();
-    const args = command.parseOrExit(&arg_iter);
+    const args = command.parseOrExit(allocator, &arg_iter);
+    defer command.parseFree(args);
 
     const cwd = std.fs.cwd();
 
@@ -184,26 +184,36 @@ fn compile(
         break :b stage;
     };
 
-    var system_include_dir = if (args.@"system-include-path") |p| b: {
-        break :b cwd.openDir(p, .{}) catch |err| {
-            log.err("system-include-path: {s}: {}", .{ p, err });
+    var system_include_dirs = ArrayList(Dir).initCapacity(
+        gpa,
+        args.@"system-include-path".items.len,
+    ) catch @panic("OOM");
+    defer system_include_dirs.deinit();
+    for (args.@"system-include-path".items) |path| {
+        system_include_dirs.appendAssumeCapacity(cwd.openDir(path, .{}) catch |err| {
+            log.err("system-include-path: {s}: {}", .{ path, err });
             std.process.exit(1);
-        };
-    } else null;
-    defer if (system_include_dir) |*d| d.close();
+        });
+    }
+    defer for (system_include_dirs.items) |*dir| dir.close();
 
-    var user_include_dir = if (args.@"user-include-path") |p| b: {
-        break :b cwd.openDir(p, .{}) catch |err| {
-            log.err("user-include-path: {s}: {}", .{ p, err });
+    var user_include_dirs = ArrayList(Dir).initCapacity(
+        gpa,
+        args.@"user-include-path".items.len,
+    ) catch @panic("OOM");
+    defer user_include_dirs.deinit();
+    for (args.@"user-include-path".items) |path| {
+        user_include_dirs.appendAssumeCapacity(cwd.openDir(path, .{}) catch |err| {
+            log.err("user-include-path: {s}: {}", .{ path, err });
             std.process.exit(1);
-        };
-    } else null;
-    defer if (user_include_dir) |*d| d.close();
+        });
+    }
+    defer for (user_include_dirs.items) |*dir| dir.close();
 
     var callback_ctx: CallbackCtx = .{
         .gpa = gpa,
-        .system_include_dir = system_include_dir,
-        .user_include_dir = user_include_dir,
+        .system_include_dirs = system_include_dirs.items,
+        .user_include_dirs = user_include_dirs.items,
     };
     const input: c.glslang_input_t = .{
         .language = c.GLSLANG_SOURCE_GLSL,
@@ -463,8 +473,8 @@ fn logFn(
 
 const CallbackCtx = struct {
     gpa: std.mem.Allocator,
-    system_include_dir: ?Dir,
-    user_include_dir: ?Dir,
+    system_include_dirs: []const Dir,
+    user_include_dirs: []const Dir,
     include_path_missing_err: bool = false,
 };
 
@@ -502,7 +512,7 @@ fn include(
 
 fn includeMaybeRelative(
     gpa: Allocator,
-    maybe_dir: ?Dir,
+    dirs: []const Dir,
     header_name: []const u8,
     includer_name: []const u8,
     depth: usize,
@@ -514,7 +524,6 @@ fn includeMaybeRelative(
     }
 
     // Get the path relative to the current file's directory
-    const dir = maybe_dir orelse return null;
     const current_path = std.fs.path.dirname(includer_name) orelse "";
     const relpath = std.fs.path.join(gpa, &.{ current_path, header_name }) catch |err| cppPanic(@errorName(err));
 
@@ -527,13 +536,18 @@ fn includeMaybeRelative(
     }
     defer gpa.free(relpath);
 
-    // Try to include relative to the current path
-    if (include(gpa, dir, relpath)) |result| {
-        return result;
-    }
+    for (dirs) |dir| {
+        // Try to include relative to the current path
+        if (include(gpa, dir, relpath)) |result| {
+            return result;
+        }
 
-    // Then try including relative to the include directory
-    return include(gpa, dir, header_name);
+        // Then try including relative to the include directory
+        if (include(gpa, dir, header_name)) |result| {
+            return result;
+        }
+    }
+    return null;
 }
 
 fn includeSystem(
@@ -543,14 +557,14 @@ fn includeSystem(
     depth: usize,
 ) callconv(.C) ?*c.glsl_include_result_t {
     const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
-    if (!ctx.include_path_missing_err and ctx.user_include_dir == null) {
+    if (!ctx.include_path_missing_err and ctx.user_include_dirs.len == 0) {
         ctx.include_path_missing_err = true;
         log.err("user-include-path/sys-include-path not set", .{});
         return null;
     }
     return includeMaybeRelative(
         ctx.gpa,
-        ctx.system_include_dir,
+        ctx.system_include_dirs,
         std.mem.span(header_name),
         std.mem.span(includer_name),
         depth,
@@ -564,14 +578,14 @@ fn includeLocal(
     depth: usize,
 ) callconv(.C) ?*c.glsl_include_result_t {
     const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
-    if (!ctx.include_path_missing_err and ctx.system_include_dir == null) {
+    if (!ctx.include_path_missing_err and ctx.system_include_dirs.len == 0) {
         ctx.include_path_missing_err = true;
         log.err("user-include-path not set", .{});
         return null;
     }
     return includeMaybeRelative(
         ctx.gpa,
-        ctx.user_include_dir,
+        ctx.user_include_dirs,
         std.mem.span(header_name),
         std.mem.span(includer_name),
         depth,
