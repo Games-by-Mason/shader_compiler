@@ -43,9 +43,7 @@ return compile_shader.addOutputFileArg("compiled.spv");
 # GL_ARB_shading_language_include
 
 WIP:
-* Don't allow using ../../ etc to go outside of the listed include directories, since this can break caching
-    * Look at the resolve/abs functions
 * Reuse readSource or such, maybe clean up/remove progress nodes
-* Does panicking from the C callbacks work? I think no because it goes through C++, may need to use process exit in those cases
 * We heap alloc the included files, may as well do the same with the normal ones
 * Write up instructions here
+* More helpful error if neither path is set and include is attempted?

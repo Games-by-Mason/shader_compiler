@@ -530,19 +530,26 @@ fn includeMaybeRelative(
     includer_name: []const u8,
     depth: usize,
 ) ?*c.glsl_include_result_t {
+    // Check the depth
     if (depth > max_include_depth) {
         log.err("exceeded max include depth: {}", .{max_include_depth});
         std.process.exit(1);
     }
 
+    // Get the path relative to the current file's directory
     const dir = maybe_dir orelse return null;
     const current_path = std.fs.path.dirname(includer_name) orelse "";
-    const relpath = std.fs.path.join(gpa, &.{ current_path, header_name }) catch |err| switch (err) {
-        error.OutOfMemory => cppPanic("OOM"),
-    };
+    const relpath = std.fs.path.join(gpa, &.{ current_path, header_name }) catch |err| cppPanic(@errorName(err));
+
+    // Make sure we're not escaping the given directory
+    const rel = std.fs.path.relative(gpa, current_path, relpath) catch |err| cppPanic(@errorName(err));
+    if (std.mem.startsWith(u8, rel, "..")) {
+        log.err("{s}: include escapes include directory", .{rel});
+        return null;
+    }
     defer gpa.free(relpath);
 
-    // First try to include relative to the current path
+    // Try to include relative to the current path
     if (include(gpa, dir, relpath)) |result| {
         return result;
     }
