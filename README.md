@@ -74,10 +74,23 @@ _ = compile_shader.addDepFileOutputArg("deps.d");
 
 WIP:
 * Test in engine
+    * [ ] Replace path resolution rules with logic from spec
+        * Started doing this, not thoroughly tested yet...
+        * Rules:
+            * forward slash starts from the root of the tree ("" or <>)
+            * otherwise, it's relative
+                * if <> or the root file, search the list in order
+                * if "", first search the path this file was found at, then search the other paths
+            * paths are always separated by /s not \s, check if it enforces this for us
+            * .. past the root saturates (not errors)
+            * [ ] does it have separate lists for <> vs ""? it seems like no
+        * Remember to write to deps file!
+        * Update instructions
     * Need to add deps file
         * [x] Get first pass working
         * [ ] escape spaces in paths with backslash
         * [ ] Consider standard syntax (-MMD or -MF or something?)
             * Update instructions if we change this
-    * [ ] Try to get rid of branch eval quote change
+    * [ ] Try to get rid of branch eval quota change
 * Consider updating dependencies
+* Do I need to flush stderr/out before exiting the process?

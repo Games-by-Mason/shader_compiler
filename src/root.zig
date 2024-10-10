@@ -72,10 +72,7 @@ const command: Command = .{
             .default = .{ .value = false },
         }),
         NamedArg.initAccum([]const u8, .{
-            .long = "system-include-path",
-        }),
-        NamedArg.initAccum([]const u8, .{
-            .long = "user-include-path",
+            .long = "include-path",
         }),
         NamedArg.init(?[]const u8, .{
             .long = "write-deps",
@@ -191,16 +188,9 @@ fn compile(
         break :b stage;
     };
 
-    for (args.@"system-include-path".items) |path| {
+    for (args.@"include-path".items) |path| {
         cwd.access(path, .{}) catch |err| {
-            log.err("system-include-path: {s}: {}", .{ path, err });
-            std.process.exit(1);
-        };
-    }
-
-    for (args.@"user-include-path".items) |path| {
-        cwd.access(path, .{}) catch |err| {
-            log.err("user-include-path: {s}: {}", .{ path, err });
+            log.err("include-path: {s}: {}", .{ path, err });
             std.process.exit(1);
         };
     }
@@ -218,10 +208,9 @@ fn compile(
         f.writeAll(": ") catch |err| @panic(@errorName(err));
     }
 
-    var callback_ctx: CallbackCtx = .{
+    var callbacks: Callbacks = .{
         .gpa = gpa,
-        .user_include_paths = args.@"user-include-path".items,
-        .system_include_paths = args.@"system-include-path".items,
+        .include_paths = args.@"include-path".items,
         .deps_file = deps_file,
     };
     const input: c.glslang_input_t = .{
@@ -269,11 +258,11 @@ fn compile(
         .messages = c.GLSLANG_MSG_DEFAULT_BIT,
         .resource = c.glslang_default_resource(),
         .callbacks = .{
-            .include_system = &includeSystem,
-            .include_local = &includeLocal,
-            .free_include_result = &freeIncludeResult,
+            .include_system = &Callbacks.includeSystem,
+            .include_local = &Callbacks.includeLocal,
+            .free_include_result = &Callbacks.freeIncludeResult,
         },
-        .callbacks_ctx = @ptrCast(&callback_ctx),
+        .callbacks_ctx = @ptrCast(&callbacks),
     };
 
     const shader = c.glslang_shader_create(&input) orelse @panic("OOM");
@@ -393,7 +382,10 @@ fn writeSpirv(dir: std.fs.Dir, path: []const u8, spirv: []const u32) void {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         std.process.exit(1);
     };
-    defer file.close();
+    defer {
+        file.sync() catch |err| @panic(@errorName(err));
+        file.close();
+    }
 
     file.writeAll(std.mem.sliceAsBytes(spirv)) catch |err| {
         log.err("{s}: {s}", .{ path, @errorName(err) });
@@ -480,149 +472,133 @@ fn logFn(
     }
 }
 
-const CallbackCtx = struct {
+const Callbacks = struct {
     gpa: std.mem.Allocator,
-    system_include_paths: []const []const u8,
-    user_include_paths: []const []const u8,
-    include_path_missing_err: bool = false,
+    include_paths: []const []const u8,
     deps_file: ?File,
-};
 
-fn cppPanic(message: []const u8) noreturn {
-    log.err("panic in callback: {s}", .{message});
-    std.debug.lockStdErr();
-    std.process.exit(2);
-}
+    pub fn includeSystem(
+        ctx: ?*anyopaque,
+        header_path_c: [*c]const u8,
+        includer_name: [*c]const u8,
+        depth: usize,
+    ) callconv(.C) ?*c.glsl_include_result_t {
+        const self: *Callbacks = @ptrCast(@alignCast(ctx));
+        const header_path = std.mem.span(header_path_c);
+        _ = includer_name;
 
-fn include(
-    gpa: Allocator,
-    include_dir: []const u8,
-    include_path: []const u8,
-    deps_file: ?File,
-) ?*c.glsl_include_result_t {
-    const path = std.fs.path.join(gpa, &.{ include_dir, include_path }) catch cppPanic("OOM");
-    defer gpa.free(path);
+        checkDepth(depth);
 
-    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
-        error.FileNotFound => {
+        if (self.include_paths.len == 0) {
+            log.err("include-path not set", .{});
             return null;
-        },
-        else => {
-            log.err("{s}: {s}", .{ path, @errorName(err) });
+        }
+
+        for (self.include_paths) |include_path| {
+            if (self.include(include_path, header_path)) |result| {
+                return result;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn includeLocal(
+        ctx: ?*anyopaque,
+        header_name_c: [*c]const u8,
+        includer_name_c: [*c]const u8,
+        depth: usize,
+    ) callconv(.C) ?*c.glsl_include_result_t {
+        const self: *Callbacks = @ptrCast(@alignCast(ctx));
+        const header_name = std.mem.span(header_name_c);
+        const includer_name = std.mem.span(includer_name_c);
+
+        checkDepth(depth);
+
+        // Get the current directory path, or skip local includes if there is none. This conforms
+        // with the `ARB_shading_language_include` specification.
+        const dir_path = std.fs.path.dirname(includer_name) orelse return null;
+
+        const header_path = std.fs.path.join(self.gpa, &.{
+            dir_path,
+            header_name,
+        }) catch cppPanic("OOM");
+        defer self.gpa.free(header_path);
+
+        for (self.include_paths) |include_path| {
+            if (self.include(include_path, header_path)) |result| {
+                return result;
+            }
+        }
+
+        return null;
+    }
+
+    // XXX: ...
+    fn freeIncludeResult(
+        ctx_c: ?*anyopaque,
+        results: [*c]c.glsl_include_result_t,
+    ) callconv(.C) c_int {
+        const ctx: *const Callbacks = @ptrCast(@alignCast(ctx_c));
+        const result = &results[0];
+        ctx.gpa.free(@as([:0]const u8, @ptrCast(result.header_data[0..result.header_length])));
+        ctx.gpa.free(std.mem.span(result.header_name));
+        ctx.gpa.destroy(result);
+        return 0;
+    }
+
+    fn checkDepth(depth: usize) void {
+        if (depth > max_include_depth) {
+            log.err("exceeded max include depth ({})", .{max_include_depth});
             std.process.exit(1);
-        },
-    };
-    defer {
-        file.sync() catch |err| @panic(@errorName(err));
-        file.close();
-    }
-    const source = file.readToEndAllocOptions(gpa, max_file_len, null, 1, 0) catch cppPanic("OOM");
-    const result = gpa.create(c.glsl_include_result_t) catch cppPanic("OOM");
-    const header_name = gpa.dupeZ(u8, include_path) catch cppPanic("OOM");
-    result.* = .{
-        .header_name = header_name.ptr,
-        .header_data = source.ptr,
-        .header_length = source.len,
-    };
-    // XXX: write the actual path to the file, not relative to the current thign or whatever, maybe work
-    // witht hat instead of opening both dirs but idk
-    if (deps_file) |f| f.writeAll(path) catch |err| @panic(@errorName(err));
-    return result;
-}
-
-fn includeMaybeRelative(
-    gpa: Allocator,
-    paths: []const []const u8,
-    deps_file: ?File,
-    header_name: []const u8,
-    includer_name: []const u8,
-    depth: usize,
-) ?*c.glsl_include_result_t {
-    // Check the depth
-    if (depth > max_include_depth) {
-        log.err("exceeded max include depth: {}", .{max_include_depth});
-        std.process.exit(1);
-    }
-
-    // Get the path relative to the current file's directory
-    const current_path = std.fs.path.dirname(includer_name) orelse "";
-    const relpath = std.fs.path.join(gpa, &.{ current_path, header_name }) catch |err| cppPanic(@errorName(err));
-
-    // Make sure we're not escaping the given directory
-    const rel = std.fs.path.relative(gpa, current_path, relpath) catch |err| cppPanic(@errorName(err));
-    defer gpa.free(rel);
-    if (std.mem.startsWith(u8, rel, "..")) {
-        log.err("{s}: include escapes include directory", .{rel});
-        return null;
-    }
-    defer gpa.free(relpath);
-
-    for (paths) |path| {
-        // Try to include relative to the current path
-        if (include(gpa, path, relpath, deps_file)) |result| {
-            return result;
-        }
-
-        // Then try including relative to the include directory
-        if (include(gpa, path, header_name, deps_file)) |result| {
-            return result;
         }
     }
-    return null;
-}
 
-fn includeSystem(
-    ctx_c: ?*anyopaque,
-    header_name: [*c]const u8,
-    includer_name: [*c]const u8,
-    depth: usize,
-) callconv(.C) ?*c.glsl_include_result_t {
-    const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
-    if (!ctx.include_path_missing_err and ctx.system_include_paths.len == 0) {
-        ctx.include_path_missing_err = true;
-        log.err("sys-include-path not set", .{});
-        return null;
+    fn cppPanic(message: []const u8) noreturn {
+        // We can't use normal panics in the callbacks, because they'd cause us to unwind through
+        // C++ code.
+        log.err("panic in callback: {s}", .{message});
+        std.process.exit(2);
     }
-    return includeMaybeRelative(
-        ctx.gpa,
-        ctx.system_include_paths,
-        ctx.deps_file,
-        std.mem.span(header_name),
-        std.mem.span(includer_name),
-        depth,
-    );
-}
 
-fn includeLocal(
-    ctx_c: ?*anyopaque,
-    header_name: [*c]const u8,
-    includer_name: [*c]const u8,
-    depth: usize,
-) callconv(.C) ?*c.glsl_include_result_t {
-    const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
-    if (!ctx.include_path_missing_err and ctx.system_include_paths.len == 0 and ctx.user_include_paths.len == 0) {
-        ctx.include_path_missing_err = true;
-        log.err("user-include-path/system-include-path not set", .{});
-        return null;
+    fn include(
+        self: *@This(),
+        include_path: []const u8,
+        header_path: []const u8,
+    ) ?*c.glsl_include_result_t {
+        // Get the full path
+        const path = std.fs.path.joinZ(self.gpa, &.{ include_path, header_path }) catch cppPanic("OOM");
+
+        // Attempt to open the file
+        const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                self.gpa.free(path);
+                return null;
+            },
+            else => {
+                log.err("{s}: {s}", .{ path, @errorName(err) });
+                std.process.exit(1);
+            },
+        };
+        defer file.close();
+
+        // Write the include path to the deps file
+        if (self.deps_file) |f| f.writeAll(path) catch |err| cppPanic(@errorName(err));
+
+        // Return the result
+        const result = self.gpa.create(c.glsl_include_result_t) catch cppPanic("OOM");
+        const source = file.readToEndAllocOptions(
+            self.gpa,
+            max_file_len,
+            null,
+            1,
+            0,
+        ) catch |err| cppPanic(@errorName(err));
+        result.* = .{
+            .header_name = path.ptr,
+            .header_data = source.ptr,
+            .header_length = source.len,
+        };
+        return result;
     }
-    return includeMaybeRelative(
-        ctx.gpa,
-        ctx.user_include_paths,
-        ctx.deps_file,
-        std.mem.span(header_name),
-        std.mem.span(includer_name),
-        depth,
-    );
-}
-
-fn freeIncludeResult(
-    ctx_c: ?*anyopaque,
-    results: [*c]c.glsl_include_result_t,
-) callconv(.C) c_int {
-    const ctx: *const CallbackCtx = @ptrCast(@alignCast(ctx_c));
-    const result = &results[0];
-    ctx.gpa.free(@as([:0]const u8, @ptrCast(result.header_data[0..result.header_length])));
-    ctx.gpa.free(std.mem.span(result.header_name));
-    ctx.gpa.destroy(result);
-    return 0;
-}
+};
