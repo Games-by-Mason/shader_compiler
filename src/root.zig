@@ -93,8 +93,6 @@ const max_file_len = 400000;
 const max_include_depth = 255;
 
 pub fn main() void {
-    @setEvalBranchQuota(2000);
-
     defer std.process.cleanExit();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
