@@ -85,6 +85,7 @@ WIP:
             * .. past the root saturates (not errors)
             * [ ] does it have separate lists for <> vs ""? it seems like no
         * Remember to write to deps file!
+        * Need to forbid forward slash, and things like C:/
         * Update instructions
     * Need to add deps file
         * [x] Get first pass working

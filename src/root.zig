@@ -487,7 +487,7 @@ const Callbacks = struct {
         const header_path = std.mem.span(header_path_c);
         _ = includer_name;
 
-        checkDepth(depth);
+        if (!checkDepthAndPath(depth, header_path, true)) return null;
 
         if (self.include_paths.len == 0) {
             log.err("include-path not set", .{});
@@ -513,7 +513,7 @@ const Callbacks = struct {
         const header_name = std.mem.span(header_name_c);
         const includer_name = std.mem.span(includer_name_c);
 
-        checkDepth(depth);
+        if (!checkDepthAndPath(depth, header_name, false)) return null;
 
         // Get the current directory path, or skip local includes if there is none. This conforms
         // with the `ARB_shading_language_include` specification.
@@ -547,11 +547,34 @@ const Callbacks = struct {
         return 0;
     }
 
-    fn checkDepth(depth: usize) void {
+    fn checkDepthAndPath(depth: usize, path: []const u8, diagnostic: bool) bool {
         if (depth > max_include_depth) {
             log.err("exceeded max include depth ({})", .{max_include_depth});
             std.process.exit(1);
         }
+
+        var lastWasSlash = false;
+        for (path) |char| {
+            switch (char) {
+                '/' => if (lastWasSlash) {
+                    if (diagnostic) {
+                        log.err("include path contains illegal substring: \"//\"", .{});
+                    }
+                    return false;
+                } else {
+                    lastWasSlash = true;
+                },
+                'a'...'z', 'A'...'Z', '_', '0'...'9', '.', ' ' => lastWasSlash = false,
+                else => {
+                    if (diagnostic) {
+                        log.err("include path contains illegal character: '{c}'", .{char});
+                    }
+                    return false;
+                },
+            }
+        }
+
+        return true;
     }
 
     fn cppPanic(message: []const u8) noreturn {
@@ -567,12 +590,12 @@ const Callbacks = struct {
         header_path: []const u8,
     ) ?*c.glsl_include_result_t {
         // Get the full path
-        const path = std.fs.path.joinZ(self.gpa, &.{ include_path, header_path }) catch cppPanic("OOM");
+        const path = std.fs.path.join(self.gpa, &.{ include_path, header_path }) catch cppPanic("OOM");
+        defer self.gpa.free(path);
 
         // Attempt to open the file
         const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
-                self.gpa.free(path);
                 return null;
             },
             else => {
@@ -595,7 +618,7 @@ const Callbacks = struct {
             0,
         ) catch |err| cppPanic(@errorName(err));
         result.* = .{
-            .header_name = path.ptr,
+            .header_name = self.gpa.dupeZ(u8, header_path) catch cppPanic("OOM"),
             .header_data = source.ptr,
             .header_length = source.len,
         };
