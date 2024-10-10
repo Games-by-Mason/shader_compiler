@@ -212,8 +212,8 @@ fn compile(
 
     var callback_ctx: CallbackCtx = .{
         .gpa = gpa,
-        .system_include_dirs = system_include_dirs.items,
         .user_include_dirs = user_include_dirs.items,
+        .system_include_dirs = system_include_dirs.items,
     };
     const input: c.glslang_input_t = .{
         .language = c.GLSLANG_SOURCE_GLSL,
@@ -557,9 +557,9 @@ fn includeSystem(
     depth: usize,
 ) callconv(.C) ?*c.glsl_include_result_t {
     const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
-    if (!ctx.include_path_missing_err and ctx.user_include_dirs.len == 0) {
+    if (!ctx.include_path_missing_err and ctx.system_include_dirs.len == 0) {
         ctx.include_path_missing_err = true;
-        log.err("user-include-path/sys-include-path not set", .{});
+        log.err("sys-include-path not set", .{});
         return null;
     }
     return includeMaybeRelative(
@@ -578,9 +578,9 @@ fn includeLocal(
     depth: usize,
 ) callconv(.C) ?*c.glsl_include_result_t {
     const ctx: *CallbackCtx = @ptrCast(@alignCast(ctx_c));
-    if (!ctx.include_path_missing_err and ctx.system_include_dirs.len == 0) {
+    if (!ctx.include_path_missing_err and ctx.system_include_dirs.len == 0 and ctx.user_include_dirs.len == 0) {
         ctx.include_path_missing_err = true;
-        log.err("user-include-path not set", .{});
+        log.err("user-include-path/system-include-path not set", .{});
         return null;
     }
     return includeMaybeRelative(

@@ -73,4 +73,3 @@ compile_shader.addDirectoryArg(b.path("system"));
 WIP:
 * Test in engine
 * Consider updating deps
-* Does the relative search work correctly? What if you're not in that particular folder?
