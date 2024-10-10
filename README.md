@@ -42,13 +42,13 @@ return compile_shader.addOutputFileArg("compiled.spv");
 
 # `GL_ARB_shading_language_include`
 
-glslang supports the [`GL_ARB_shading_language_include`](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_shading_language_include.txt) extension. You can enable it in your shaders like this:
+`glslang` supports `#include` via the [`GL_ARB_shading_language_include`](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_shading_language_include.txt) extension. You can enable it in your shaders like this:
 
 ```glsl
 #extension GL_ARB_shading_language_include : require
 ```
 
-You will also need to specify at least one include path via `--include-path`. If calling via Zig's build system, use '--write-deps' for proper caching behavior.
+You will also need to specify at least one include path via `--include-path`. Multiple can be specified by passing the arg more than once. If calling via Zig's build system, use '--write-deps' for proper caching behavior.
 
 Command line:
 ```
@@ -63,10 +63,10 @@ compile_shader.addArg("--write-deps");
 _ = compile_shader.addDepFileOutputArg("deps.d");
 ```
 
-See the extension specification for details on usage and path resolution.
+You can now include files in your shaders:
+```glsl
+#include "foo.glsl"
+```
 
-WIP:
-* Test in engine
-    * [ ] Try to get rid of branch eval quota change
-* Consider updating dependencies
-* Do I need to flush stderr/out before exiting the process?
+For details on inclusion syntax and path resolution, see the [extension specification](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_shading_language_include.txt).
+
