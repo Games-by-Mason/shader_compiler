@@ -8,8 +8,8 @@
             .hash = "1220d8a973a82dc73994c611172c007155aa1938be78f672f003a30c7dca057e3fff",
         },
         .structopt = .{
-            .url = "https://github.com/Games-by-Mason/structopt/archive/c1f85f8b5efd7600f754c54b4f815246cb08bf42.zip",
-            .hash = "122072587881fa098592ad65780c18a338a1e37cf30df77880ef8bb879de337ce4a1",
+            .url = "https://github.com/Games-by-Mason/structopt/archive/567b96739d1c257e7cd618dab0de13ef5162f8ee.zip",
+            .hash = "12208ceea6adb884868738bcaf836eb3ef8d6f9e6bb5a14cadc8980a74159187c62a",
         },
     },
     .paths = .{
