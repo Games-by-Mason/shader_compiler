@@ -62,14 +62,22 @@ Command line:
 zig build run -- --target Vulkan-1.3 --user-include-path user --system-include-path system shader.vert shader.spv
 ```
 
-Zig build system:
+Zig build system, note the deps file argument for proper cache invalidation:
 ```zig
 compile_shader.addArg("--user-include-path");
 compile_shader.addDirectoryArg(b.path("user"));
 compile_shader.addArg("--system-include-path");
 compile_shader.addDirectoryArg(b.path("system"));
+compile_shader.addArg("--write-deps");
+_ = compile_shader.addDepFileOutputArg("deps.d");
 ```
 
 WIP:
 * Test in engine
-* Consider updating deps
+    * Need to add deps file
+        * [x] Get first pass working
+        * [ ] escape spaces in paths with backslash
+        * [ ] Consider standard syntax (-MMD or -MF or something?)
+            * Update instructions if we change this
+    * [ ] Try to get rid of branch eval quote change
+* Consider updating dependencies
