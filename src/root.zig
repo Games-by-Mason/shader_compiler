@@ -203,15 +203,15 @@ fn compile(
         f.sync() catch |err| @panic(@errorName(err));
         f.close();
     };
-    if (deps_file) |f| {
-        f.writeAll(args.OUTPUT) catch |err| @panic(@errorName(err));
-        f.writeAll(": ") catch |err| @panic(@errorName(err));
+    const deps_writer = if (deps_file) |f| f.writer() else null;
+    if (deps_writer) |f| {
+        f.print("{s}: ", .{args.OUTPUT}) catch |err| @panic(@errorName(err));
     }
 
     var callbacks: Callbacks = .{
         .gpa = gpa,
         .include_paths = args.@"include-path".items,
-        .deps_file = deps_file,
+        .deps_writer = deps_writer,
     };
     const input: c.glslang_input_t = .{
         .language = c.GLSLANG_SOURCE_GLSL,
@@ -475,7 +475,7 @@ fn logFn(
 const Callbacks = struct {
     gpa: std.mem.Allocator,
     include_paths: []const []const u8,
-    deps_file: ?File,
+    deps_writer: ?File.Writer,
 
     pub fn includeSystem(
         ctx: ?*anyopaque,
@@ -517,7 +517,10 @@ const Callbacks = struct {
 
         // Get the current directory path, or skip local includes if there is none. This conforms
         // with the `ARB_shading_language_include` specification.
-        const dir_path = std.fs.path.dirname(includer_name) orelse return null;
+        const dir_path = std.fs.path.dirnamePosix(includer_name) orelse return null;
+
+        // If we're an absolute path, skip local includes.
+        if (header_name.len > 0 and header_name[0] == '/') return null;
 
         const header_path = std.fs.path.join(self.gpa, &.{
             dir_path,
@@ -606,7 +609,16 @@ const Callbacks = struct {
         defer file.close();
 
         // Write the include path to the deps file
-        if (self.deps_file) |f| f.writeAll(path) catch |err| cppPanic(@errorName(err));
+        if (self.deps_writer) |deps_writer| {
+            deps_writer.print("{s} ", .{path}) catch |err| cppPanic(@errorName(err));
+            for (path) |char| {
+                if (char == ' ') {
+                    deps_writer.writeByte('\\') catch |err| cppPanic(@errorName(err));
+                }
+                deps_writer.writeByte(char) catch |err| cppPanic(@errorName(err));
+            }
+            deps_writer.writeByte(' ') catch |err| cppPanic(@errorName(err));
+        }
 
         // Return the result
         const result = self.gpa.create(c.glsl_include_result_t) catch cppPanic("OOM");

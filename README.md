@@ -48,50 +48,25 @@ glslang supports the [`GL_ARB_shading_language_include`](https://registry.khrono
 #extension GL_ARB_shading_language_include : require
 ```
 
-Once enabled, the shader compiler supports preprocessor include:
-
-```glsl
-#include "foo.glsl" // Searches the user include path, then the system include path
-#include <bar/baz.glsl> // Just searches the system include path
-```
-
-To use this feature, you must set the user and system include paths with "--user-include-path" and "--system-include-path". These arguments accumulate, if you set them multiple times earlier paths are searched first.
+You will also need to specify at least one include path via `--include-path`. If calling via Zig's build system, use '--write-deps' for proper caching behavior.
 
 Command line:
 ```
-zig build run -- --target Vulkan-1.3 --user-include-path user --system-include-path system shader.vert shader.spv
+zig build run -- --target Vulkan-1.3 --include-path include shader.vert shader.spv
 ```
 
-Zig build system, note the deps file argument for proper cache invalidation:
+Zig build system:
 ```zig
-compile_shader.addArg("--user-include-path");
-compile_shader.addDirectoryArg(b.path("user"));
-compile_shader.addArg("--system-include-path");
-compile_shader.addDirectoryArg(b.path("system"));
+compile_shader.addArg("--include-path");
+compile_shader.addDirectoryArg(b.path("include"));
 compile_shader.addArg("--write-deps");
 _ = compile_shader.addDepFileOutputArg("deps.d");
 ```
 
+See the extension specification for details on usage and path resolution.
+
 WIP:
 * Test in engine
-    * [ ] Replace path resolution rules with logic from spec
-        * Started doing this, not thoroughly tested yet...
-        * Rules:
-            * forward slash starts from the root of the tree ("" or <>)
-            * otherwise, it's relative
-                * if <> or the root file, search the list in order
-                * if "", first search the path this file was found at, then search the other paths
-            * paths are always separated by /s not \s, check if it enforces this for us
-            * .. past the root saturates (not errors)
-            * [ ] does it have separate lists for <> vs ""? it seems like no
-        * Remember to write to deps file!
-        * Need to forbid forward slash, and things like C:/
-        * Update instructions
-    * Need to add deps file
-        * [x] Get first pass working
-        * [ ] escape spaces in paths with backslash
-        * [ ] Consider standard syntax (-MMD or -MF or something?)
-            * Update instructions if we change this
     * [ ] Try to get rid of branch eval quota change
 * Consider updating dependencies
 * Do I need to flush stderr/out before exiting the process?
