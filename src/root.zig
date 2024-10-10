@@ -97,7 +97,7 @@ pub fn main() void {
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
     defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator: std.mem.Allocator = gpa.allocator();
+    const allocator = gpa.allocator();
 
     var arg_iter = std.process.argsWithAllocator(allocator) catch @panic("OOM");
     defer arg_iter.deinit();
@@ -535,7 +535,6 @@ const Callbacks = struct {
         return null;
     }
 
-    // XXX: ...
     fn freeIncludeResult(
         ctx_c: ?*anyopaque,
         results: [*c]c.glsl_include_result_t,
