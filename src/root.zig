@@ -12,7 +12,7 @@ const NamedArg = structopt.NamedArg;
 const Dir = std.fs.Dir;
 const File = std.fs.File;
 
-pub const std_options = .{
+pub const std_options: std.Options = .{
     .logFn = logFn,
     .log_level = .info,
 };
