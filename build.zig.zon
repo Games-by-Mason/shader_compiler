@@ -4,12 +4,12 @@
     .minimum_zig_version = "0.14.0-dev.1495+f29bdd674",
     .dependencies = .{
         .glslang = .{
-            .url = "https://github.com/Games-by-Mason/glslang-zig/archive/5f7826e610a1724e9056e84323c0ce775308311b.tar.gz",
-            .hash = "1220d9e5f80f204e09f55f64fdf398be0148c12eb872d05bc87ffc1cc68ce520f7f5",
+            .url = "https://github.com/Games-by-Mason/glslang-zig/archive/8fcb4d55d0601c3fdfeae29bacbe3bdcb5dbe9ad.tar.gz",
+            .hash = "122087eee45ec8fb0d048e93d66f148db681b5eea26d20be0c2c67f307a95be25dfa",
         },
         .structopt = .{
-            .url = "https://github.com/Games-by-Mason/structopt/archive/5bc9d351de473812a7b0c65f2f2072341107793f.zip",
-            .hash = "12209b09cadda994667644d5d2b7b0929d6b6086577844f9a07c0a9794bd73d72d63",
+            .url = "https://github.com/Games-by-Mason/structopt/archive/c95fc0c3b30cfc1f564b798bb0c9eccfa728ee15.zip",
+            .hash = "12204b88b3632a667f4e1230610d3fc37b83e1c6af8811269add18595d85fa8e0a87",
         },
     },
     .paths = .{

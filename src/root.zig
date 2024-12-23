@@ -110,14 +110,14 @@ pub fn main() void {
     estimated_total_items += 1; // Read source
     estimated_total_items += 1; // Compile
     estimated_total_items += 1; // Optimize (even if 0 passes still starts up)
-    if (args.remap) estimated_total_items += 1;
+    if (args.named.remap) estimated_total_items += 1;
     estimated_total_items += 1; // Validate
     estimated_total_items += 1; // Write
 
     if (c.glslang_initialize_process() == c.false) @panic("glslang_initialize_process failed");
     defer c.glslang_finalize_process();
 
-    const source = readSource(allocator, cwd, args.INPUT);
+    const source = readSource(allocator, cwd, args.positional.INPUT);
     defer allocator.free(source);
 
     const compiled = compile(allocator, source, args);
@@ -126,11 +126,11 @@ pub fn main() void {
     const optimized = optimize(compiled, args);
     defer optimizeFree(optimized);
 
-    const remapped = if (args.remap) remap(optimized) else compiled;
+    const remapped = if (args.named.remap) remap(optimized) else compiled;
 
-    validate(args.INPUT, remapped, args.target);
+    validate(args.positional.INPUT, remapped, args.named.target);
 
-    writeSpirv(cwd, args.OUTPUT, remapped);
+    writeSpirv(cwd, args.positional.OUTPUT, remapped);
 }
 
 fn readSource(
@@ -174,26 +174,26 @@ fn compile(
             .{ ".task", c.GLSLANG_STAGE_TASK },
             .{ ".mesh", c.GLSLANG_STAGE_MESH },
         });
-        const period = std.mem.lastIndexOfScalar(u8, args.INPUT, '.') orelse {
-            log.err("{s}: shader missing extension", .{args.INPUT});
+        const period = std.mem.lastIndexOfScalar(u8, args.positional.INPUT, '.') orelse {
+            log.err("{s}: shader missing extension", .{args.positional.INPUT});
             std.process.exit(1);
         };
-        const extension = args.INPUT[period..];
+        const extension = args.positional.INPUT[period..];
         const stage = stages.get(extension) orelse {
-            log.err("{s}: unknown extension", .{args.INPUT});
+            log.err("{s}: unknown extension", .{args.positional.INPUT});
             std.process.exit(1);
         };
         break :b stage;
     };
 
-    for (args.@"include-path".items) |path| {
+    for (args.named.@"include-path".items) |path| {
         cwd.access(path, .{}) catch |err| {
             log.err("include-path: {s}: {}", .{ path, err });
             std.process.exit(1);
         };
     }
 
-    const deps_file = if (args.@"write-deps") |path| cwd.createFile(path, .{}) catch |err| {
+    const deps_file = if (args.named.@"write-deps") |path| cwd.createFile(path, .{}) catch |err| {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         std.process.exit(1);
     } else null;
@@ -203,18 +203,18 @@ fn compile(
     };
     const deps_writer = if (deps_file) |f| f.writer() else null;
     if (deps_writer) |f| {
-        f.print("{s}: ", .{args.OUTPUT}) catch |err| @panic(@errorName(err));
+        f.print("{s}: ", .{args.positional.OUTPUT}) catch |err| @panic(@errorName(err));
     }
 
     var callbacks: Callbacks = .{
         .gpa = gpa,
-        .include_paths = args.@"include-path".items,
+        .include_paths = args.named.@"include-path".items,
         .deps_writer = deps_writer,
     };
     const input: c.glslang_input_t = .{
         .language = c.GLSLANG_SOURCE_GLSL,
         .stage = stage,
-        .client = switch (args.target) {
+        .client = switch (args.named.target) {
             .@"Vulkan-1.0",
             .@"Vulkan-1.1",
             .@"Vulkan-1.2",
@@ -222,7 +222,7 @@ fn compile(
             => c.GLSLANG_CLIENT_VULKAN,
             .@"OpenGL-4.5" => c.GLSLANG_CLIENT_OPENGL,
         },
-        .client_version = switch (args.target) {
+        .client_version = switch (args.named.target) {
             .@"Vulkan-1.0" => c.GLSLANG_TARGET_VULKAN_1_0,
             .@"Vulkan-1.1" => c.GLSLANG_TARGET_VULKAN_1_1,
             .@"Vulkan-1.2" => c.GLSLANG_TARGET_VULKAN_1_2,
@@ -230,8 +230,8 @@ fn compile(
             .@"OpenGL-4.5" => c.GLSLANG_TARGET_OPENGL_450,
         },
         .target_language = c.GLSLANG_TARGET_SPV,
-        .target_language_version = switch (args.@"spirv-version") {
-            .default => switch (args.target) {
+        .target_language_version = switch (args.named.@"spirv-version") {
+            .default => switch (args.named.target) {
                 .@"Vulkan-1.0" => c.GLSLANG_TARGET_SPV_1_0,
                 .@"Vulkan-1.1" => c.GLSLANG_TARGET_SPV_1_3,
                 .@"Vulkan-1.2" => c.GLSLANG_TARGET_SPV_1_5,
@@ -267,11 +267,11 @@ fn compile(
     defer c.glslang_shader_delete(shader);
 
     if (c.glslang_shader_preprocess(shader, &input) == c.false) {
-        compilationFailed(shader, "preprocessing", args.INPUT);
+        compilationFailed(shader, "preprocessing", args.positional.INPUT);
     }
 
     if (c.glslang_shader_parse(shader, &input) == c.false) {
-        compilationFailed(shader, "parsing", args.INPUT);
+        compilationFailed(shader, "parsing", args.positional.INPUT);
     }
 
     const program: *c.glslang_program_t = c.glslang_program_create() orelse @panic("OOM");
@@ -283,7 +283,7 @@ fn compile(
         program,
         c.GLSLANG_MSG_SPV_RULES_BIT | c.GLSLANG_MSG_VULKAN_RULES_BIT,
     ) == c.false) {
-        compilationFailed(shader, "linking", args.INPUT);
+        compilationFailed(shader, "linking", args.positional.INPUT);
     }
 
     c.glslang_program_SPIRV_generate(program, stage);
@@ -294,7 +294,7 @@ fn compile(
     c.glslang_program_SPIRV_get(program, buf.ptr);
 
     if (c.glslang_program_SPIRV_get_messages(program)) |msgs| {
-        writeGlslMessages(log.info, args.INPUT, msgs);
+        writeGlslMessages(log.info, args.positional.INPUT, msgs);
     }
 
     return buf[0..size];
@@ -305,15 +305,15 @@ fn optimize(spirv: []u32, args: command.Result()) []u32 {
     const options = c.spvOptimizerOptionsCreate() orelse @panic("OOM");
     defer c.spvOptimizerOptionsDestroy(options);
     c.spvOptimizerOptionsSetRunValidator(options, false);
-    c.spvOptimizerOptionsSetPreserveBindings(options, args.@"preserve-bindings");
-    c.spvOptimizerOptionsSetPreserveSpecConstants(options, args.@"preserve-spec-constants");
+    c.spvOptimizerOptionsSetPreserveBindings(options, args.named.@"preserve-bindings");
+    c.spvOptimizerOptionsSetPreserveSpecConstants(options, args.named.@"preserve-spec-constants");
 
     // Create the optimizer
-    const optimizer = c.spvOptimizerCreate(@intFromEnum(args.target)) orelse @panic("OOM");
+    const optimizer = c.spvOptimizerCreate(@intFromEnum(args.named.target)) orelse @panic("OOM");
     defer c.spvOptimizerDestroy(optimizer);
-    if (args.@"optimize-perf") c.spvOptimizerRegisterPerformancePasses(optimizer);
-    if (args.@"optimize-size") c.spvOptimizerRegisterSizePasses(optimizer);
-    if (args.@"robust-access") {
+    if (args.named.@"optimize-perf") c.spvOptimizerRegisterPerformancePasses(optimizer);
+    if (args.named.@"optimize-size") c.spvOptimizerRegisterSizePasses(optimizer);
+    if (args.named.@"robust-access") {
         assert(c.spvOptimizerRegisterPassFromFlag(optimizer, "--graphics-robust-access"));
     }
 
