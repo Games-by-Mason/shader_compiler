@@ -33,7 +33,7 @@ switch (optimize) {
     }),
     .ReleaseSmall => compile_shader.addArgs(&.{
         "--optimize-perf",
-        "--optimize-small",
+        "--optimize-size",
     }),
 }
 compile_shader.addFileArg(b.path(path));
