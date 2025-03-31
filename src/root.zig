@@ -100,7 +100,7 @@ const command: Command = .{
             .default = .{ .value = false },
         }),
         NamedArg.init(bool, .{
-            .long = "allow-localsizeid",
+            .long = "allow-local-size-id",
             .default = .{ .value = false },
         }),
         NamedArg.initAccum([]const u8, .{
@@ -388,7 +388,7 @@ fn validate(path: []const u8, spirv: []u32, args: command.Result()) void {
     c.spvValidatorOptionsSetWorkgroupScalarBlockLayout(options, args.named.@"workgroup-scalar-block-layout");
     c.spvValidatorOptionsSetSkipBlockLayout(options, args.named.@"skip-block-layout");
     c.spvValidatorOptionsSetRelaxStoreStruct(options, args.named.@"relax-struct-store");
-    c.spvValidatorOptionsSetAllowLocalSizeId(options, args.named.@"allow-localsizeid");
+    c.spvValidatorOptionsSetAllowLocalSizeId(options, args.named.@"allow-local-size-id");
 
     var spirv_diagnostic: [8]c.spv_diagnostic = .{null} ** 8;
     if (c.spvValidateWithOptions(spirv_context, options, &spirv_binary, &spirv_diagnostic) != c.SPV_SUCCESS) {
