@@ -71,6 +71,38 @@ const command: Command = .{
             .long = "preserve-spec-constants",
             .default = .{ .value = false },
         }),
+        NamedArg.init(bool, .{
+            .long = "relax-logical-pointer",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "relax-block-layout",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "uniform-buffer-standard-layout",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "scalar-block-layout",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "workgroup-scalar-block-layout",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "skip-block-layout",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "relax-struct-store",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "allow-local-size-id",
+            .default = .{ .value = false },
+        }),
         NamedArg.initAccum([]const u8, .{
             .long = "include-path",
         }),
@@ -128,7 +160,7 @@ pub fn main() void {
 
     const remapped = if (args.named.remap) remap(optimized) else compiled;
 
-    validate(args.positional.INPUT, remapped, args.named.target);
+    validate(args.positional.INPUT, remapped, args);
 
     writeSpirv(cwd, args.positional.OUTPUT, remapped);
 }
@@ -339,15 +371,27 @@ fn remap(spirv: []u32) []u32 {
     return spirv[0..len];
 }
 
-fn validate(path: []const u8, spirv: []u32, target: Target) void {
-    const spirv_context = c.spvContextCreate(@intFromEnum(target));
+fn validate(path: []const u8, spirv: []u32, args: command.Result()) void {
+    const spirv_context = c.spvContextCreate(@intFromEnum(args.named.target));
     defer c.spvContextDestroy(spirv_context);
     var spirv_binary: c.spv_const_binary_t = .{
         .code = spirv.ptr,
         .wordCount = spirv.len,
     };
+
+    const options = c.spvValidatorOptionsCreate() orelse @panic("OOM");
+    defer c.spvValidatorOptionsDestroy(options);
+    c.spvValidatorOptionsSetRelaxLogicalPointer(options, args.named.@"relax-logical-pointer");
+    c.spvValidatorOptionsSetRelaxBlockLayout(options, args.named.@"relax-block-layout");
+    c.spvValidatorOptionsSetUniformBufferStandardLayout(options, args.named.@"uniform-buffer-standard-layout");
+    c.spvValidatorOptionsSetScalarBlockLayout(options, args.named.@"scalar-block-layout");
+    c.spvValidatorOptionsSetWorkgroupScalarBlockLayout(options, args.named.@"workgroup-scalar-block-layout");
+    c.spvValidatorOptionsSetSkipBlockLayout(options, args.named.@"skip-block-layout");
+    c.spvValidatorOptionsSetRelaxStoreStruct(options, args.named.@"relax-struct-store");
+    c.spvValidatorOptionsSetAllowLocalSizeId(options, args.named.@"allow-local-size-id");
+
     var spirv_diagnostic: [8]c.spv_diagnostic = .{null} ** 8;
-    if (c.spvValidate(spirv_context, &spirv_binary, &spirv_diagnostic) != c.SPV_SUCCESS) {
+    if (c.spvValidateWithOptions(spirv_context, options, &spirv_binary, &spirv_diagnostic) != c.SPV_SUCCESS) {
         log.err("{s}: SPIRV validation failed", .{path});
         for (spirv_diagnostic) |diagnostic| {
             const d = diagnostic orelse break;
