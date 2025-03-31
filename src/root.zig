@@ -103,6 +103,58 @@ const command: Command = .{
             .long = "allow-local-size-id",
             .default = .{ .value = false },
         }),
+        NamedArg.init(bool, .{
+            .long = "allow-offset-texture-operand",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "allow-vulkan32-bit-bitwise",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "before-hlsl-legalization",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
+            .long = "friendly-names",
+            .default = .{ .value = true },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-struct-members",
+            .default = .{ .value = 16383 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-struct-depth",
+            .default = .{ .value = 255 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-local-variables",
+            .default = .{ .value = 524287 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-global-variables",
+            .default = .{ .value = 65535 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-switch-branches",
+            .default = .{ .value = 16383 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-function-args",
+            .default = .{ .value = 255 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-control-flow-nesting-depth",
+            .default = .{ .value = 1023 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-access-chain-indexes",
+            .default = .{ .value = 255 },
+        }),
+        NamedArg.init(u32, .{
+            .long = "max-id-bound",
+            .default = .{ .value = 0x3FFFFF },
+        }),
         NamedArg.initAccum([]const u8, .{
             .long = "include-path",
         }),
@@ -125,6 +177,8 @@ const max_file_len = 400000;
 const max_include_depth = 255;
 
 pub fn main() void {
+    @setEvalBranchQuota(2000); // For structopt
+
     defer std.process.cleanExit();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
@@ -381,17 +435,111 @@ fn validate(path: []const u8, spirv: []u32, args: command.Result()) void {
 
     const options = c.spvValidatorOptionsCreate() orelse @panic("OOM");
     defer c.spvValidatorOptionsDestroy(options);
-    c.spvValidatorOptionsSetRelaxLogicalPointer(options, args.named.@"relax-logical-pointer");
-    c.spvValidatorOptionsSetRelaxBlockLayout(options, args.named.@"relax-block-layout");
-    c.spvValidatorOptionsSetUniformBufferStandardLayout(options, args.named.@"uniform-buffer-standard-layout");
-    c.spvValidatorOptionsSetScalarBlockLayout(options, args.named.@"scalar-block-layout");
-    c.spvValidatorOptionsSetWorkgroupScalarBlockLayout(options, args.named.@"workgroup-scalar-block-layout");
-    c.spvValidatorOptionsSetSkipBlockLayout(options, args.named.@"skip-block-layout");
-    c.spvValidatorOptionsSetRelaxStoreStruct(options, args.named.@"relax-struct-store");
-    c.spvValidatorOptionsSetAllowLocalSizeId(options, args.named.@"allow-local-size-id");
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_struct_members,
+        args.named.@"max-struct-members",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_struct_depth,
+        args.named.@"max-struct-depth",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_local_variables,
+        args.named.@"max-local-variables",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_global_variables,
+        args.named.@"max-global-variables",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_switch_branches,
+        args.named.@"max-switch-branches",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_function_args,
+        args.named.@"max-function-args",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_control_flow_nesting_depth,
+        args.named.@"max-control-flow-nesting-depth",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_access_chain_indexes,
+        args.named.@"max-access-chain-indexes",
+    );
+    c.spvValidatorOptionsSetUniversalLimit(
+        options,
+        c.spv_validator_limit_max_id_bound,
+        args.named.@"max-id-bound",
+    );
+    c.spvValidatorOptionsSetRelaxStoreStruct(
+        options,
+        args.named.@"relax-struct-store",
+    );
+    c.spvValidatorOptionsSetRelaxLogicalPointer(
+        options,
+        args.named.@"relax-logical-pointer",
+    );
+    c.spvValidatorOptionsSetRelaxBlockLayout(
+        options,
+        args.named.@"relax-block-layout",
+    );
+    c.spvValidatorOptionsSetUniformBufferStandardLayout(
+        options,
+        args.named.@"uniform-buffer-standard-layout",
+    );
+    c.spvValidatorOptionsSetScalarBlockLayout(
+        options,
+        args.named.@"scalar-block-layout",
+    );
+    c.spvValidatorOptionsSetWorkgroupScalarBlockLayout(
+        options,
+        args.named.@"workgroup-scalar-block-layout",
+    );
+    c.spvValidatorOptionsSetSkipBlockLayout(
+        options,
+        args.named.@"skip-block-layout",
+    );
+    c.spvValidatorOptionsSetRelaxStoreStruct(
+        options,
+        args.named.@"relax-struct-store",
+    );
+    c.spvValidatorOptionsSetAllowLocalSizeId(
+        options,
+        args.named.@"allow-local-size-id",
+    );
+    c.spvValidatorOptionsSetAllowOffsetTextureOperand(
+        options,
+        args.named.@"allow-offset-texture-operand",
+    );
+    c.spvValidatorOptionsSetAllowVulkan32BitBitwise(
+        options,
+        args.named.@"allow-vulkan32-bit-bitwise",
+    );
+    c.spvValidatorOptionsSetBeforeHlslLegalization(
+        options,
+        args.named.@"before-hlsl-legalization",
+    );
+    c.spvValidatorOptionsSetFriendlyNames(
+        options,
+        args.named.@"friendly-names",
+    );
 
     var spirv_diagnostic: [8]c.spv_diagnostic = .{null} ** 8;
-    if (c.spvValidateWithOptions(spirv_context, options, &spirv_binary, &spirv_diagnostic) != c.SPV_SUCCESS) {
+    if (c.spvValidateWithOptions(
+        spirv_context,
+        options,
+        &spirv_binary,
+        &spirv_diagnostic,
+    ) != c.SPV_SUCCESS) {
         log.err("{s}: SPIRV validation failed", .{path});
         for (spirv_diagnostic) |diagnostic| {
             const d = diagnostic orelse break;
