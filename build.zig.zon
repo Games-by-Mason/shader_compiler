@@ -1,7 +1,7 @@
 .{
     .name = .shader_compiler,
     .fingerprint = 0x36d3f5d96a6ce56c,
-    .version = "0.0.0",
+    .version = "1.0.0",
     .minimum_zig_version = "0.15.0-dev.383+927f233ff",
     .dependencies = .{
         .glslang = .{
