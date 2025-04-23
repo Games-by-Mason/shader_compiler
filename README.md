@@ -4,6 +4,10 @@ A command line tool that compiles GLSL shaders to SPIRV, and optimizes them usin
 
 Remap is also supported (results in better compression), SPIRV is validated before results are written.
 
+# Zig Version
+
+[`main`](https://github.com/Games-by-Mason/shader_compiler/tree/main) loosely tracks Zig master. For support for Zig 0.14.0, use [v1.0.0](https://github.com/Games-by-Mason/shader_compiler/releases/tag/v0.1.0).
+
 # Usage
 
 Note that the initial compile will take quite while as it's building the shader C++ implementation of the shader compiler. Once this finishes it will be cached.

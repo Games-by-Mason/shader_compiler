@@ -2,7 +2,7 @@
     .name = .shader_compiler,
     .fingerprint = 0x36d3f5d96a6ce56c,
     .version = "1.0.0",
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.0-dev.383+927f233ff",
     .dependencies = .{
         .glslang = .{
             .url = "https://github.com/Games-by-Mason/glslang-zig/archive/4d2877072dc0ebb97698e6620a59e55ef3f367ce.tar.gz",

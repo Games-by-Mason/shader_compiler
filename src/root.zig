@@ -230,7 +230,7 @@ fn readSource(
     };
     defer file.close();
 
-    return file.readToEndAllocOptions(gpa, max_file_len, null, 1, 0) catch |err| {
+    return file.readToEndAllocOptions(gpa, max_file_len, null, .@"1", 0) catch |err| {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         std.process.exit(1);
     };
@@ -815,7 +815,7 @@ const Callbacks = struct {
             self.gpa,
             max_file_len,
             null,
-            1,
+            .@"1",
             0,
         ) catch |err| cppPanic(@errorName(err));
         result.* = .{
