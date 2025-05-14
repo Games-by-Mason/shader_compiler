@@ -25,14 +25,8 @@ compile_shader.addArgs(&.{
     "--target", "Vulkan-1.3",
 });
 switch (optimize) {
-    .Debug => compile_shader.addArgs(&.{
-        "--robust-access",
-    }),
-    .ReleaseSafe => compile_shader.addArgs(&.{
-        "--optimize-perf",
-        "--robust-access",
-    }),
-    .ReleaseFast => compile_shader.addArgs(&.{
+    .Debug => {},
+    .ReleaseSafe, .ReleaseFast => compile_shader.addArgs(&.{
         "--optimize-perf",
     }),
     .ReleaseSmall => compile_shader.addArgs(&.{
