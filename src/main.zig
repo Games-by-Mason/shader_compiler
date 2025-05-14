@@ -52,6 +52,10 @@ const command: Command = .{
             .default = .{ .value = false },
         }),
         NamedArg.init(bool, .{
+            .long = "debug",
+            .default = .{ .value = false },
+        }),
+        NamedArg.init(bool, .{
             .long = "optimize-perf",
             .default = .{ .value = false },
         }),
@@ -164,10 +168,10 @@ const command: Command = .{
         }),
     },
     .positional_args = &.{
-        PositionalArg.init([]const u8, .{
+        PositionalArg.init([:0]const u8, .{
             .meta = "INPUT",
         }),
-        PositionalArg.init([]const u8, .{
+        PositionalArg.init([:0]const u8, .{
             .meta = "OUTPUT",
         }),
     },
@@ -238,7 +242,7 @@ fn readSource(
 
 fn compile(
     gpa: Allocator,
-    source: [*:0]const u8,
+    source: [:0]const u8,
     args: command.Result(),
 ) []u32 {
     const cwd = std.fs.cwd();
@@ -372,7 +376,22 @@ fn compile(
         compilationFailed(shader, "linking", args.positional.INPUT);
     }
 
-    c.glslang_program_SPIRV_generate(program, stage);
+    c.glslang_program_set_source_file(program, stage, args.positional.INPUT);
+    c.glslang_program_add_source_text(program, stage, source, source.len);
+
+    var options: c.glslang_spv_options_t = .{
+        .generate_debug_info = args.named.debug,
+        .strip_debug_info = !args.named.debug,
+        .disable_optimizer = true,
+        .optimize_size = false,
+        .disassemble = false,
+        .validate = true,
+        .emit_nonsemantic_shader_debug_info = false,
+        .emit_nonsemantic_shader_debug_source = false,
+        .compile_only = false,
+        .optimize_allow_expanded_id_bound = false,
+    };
+    c.glslang_program_SPIRV_generate_with_options(program, stage, &options);
 
     const size = c.glslang_program_SPIRV_get_size(program);
     const buf = gpa.alloc(u32, size) catch @panic("OOM");

@@ -9,8 +9,8 @@
             .hash = "glslang-1.4.309-eMn68Pu-CQBK98WlBPbet0hMUVM2hNWdVP4mKn1hNsD-",
         },
         .structopt = .{
-            .url = "https://github.com/Games-by-Mason/structopt/archive/ece2d39c8d577b17757aa74fca6982340b0d11eb.zip",
-            .hash = "structopt-0.0.0-OgtKAowoAQDe4FinGx-MizYv4mN15C4zEIlotz20qHl-",
+            .url = "https://github.com/Games-by-Mason/structopt/archive/d25aa44c2de2a035d2d17b9b0ebd2df4304642a7.zip",
+            .hash = "structopt-1.0.0-OgtKAmU3AQDps_oC4lcxt8kUDaHQlkj9vR-510Q0JojF",
         },
     },
     .paths = .{
