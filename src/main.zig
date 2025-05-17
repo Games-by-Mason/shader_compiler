@@ -818,7 +818,6 @@ const Callbacks = struct {
 
         // Write the include path to the deps file
         if (self.deps_writer) |deps_writer| {
-            deps_writer.print("{s} ", .{path}) catch |err| cppPanic(@errorName(err));
             for (path) |char| {
                 if (char == ' ') {
                     deps_writer.writeByte('\\') catch |err| cppPanic(@errorName(err));
