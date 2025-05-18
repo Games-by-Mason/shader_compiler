@@ -21,6 +21,7 @@ Example usage from Zig's build system:
 
 ```zig
 const compile_shader = b.addRunArtifact(shader_compiler_exe);
+compile_shader.addArg("--scalar-block-layout");
 compile_shader.addArgs(&.{
     "--target", "Vulkan-1.3",
 });
