@@ -166,6 +166,15 @@ const command: Command = .{
             .long = "write-deps",
             .default = .{ .value = null },
         }),
+        NamedArg.init(?[]const u8, .{
+            .long = "preamble",
+            .default = .{ .value = null },
+        }),
+        // Required for preamble to be useful
+        NamedArg.init(i32, .{
+            .long = "default-version",
+            .default = .{ .value = 100 },
+        }),
     },
     .positional_args = &.{
         PositionalArg.init([:0]const u8, .{
@@ -210,7 +219,12 @@ pub fn main() void {
     const source = readSource(allocator, cwd, args.positional.INPUT);
     defer allocator.free(source);
 
-    const compiled = compile(allocator, source, args);
+    const preamble = if (args.named.preamble) |path| b: {
+        break :b readSource(allocator, cwd, path);
+    } else null;
+    defer if (preamble) |p| allocator.free(p);
+
+    const compiled = compile(allocator, source, preamble, args);
     defer allocator.free(compiled);
 
     const optimized = optimize(compiled, args);
@@ -243,6 +257,7 @@ fn readSource(
 fn compile(
     gpa: Allocator,
     source: [:0]const u8,
+    preamble: ?[:0]const u8,
     args: command.Result(),
 ) []u32 {
     const cwd = std.fs.cwd();
@@ -337,8 +352,7 @@ fn compile(
             .@"1.6" => c.GLSLANG_TARGET_SPV_1_6,
         },
         .code = source,
-        // Poorly documented, reference exe always passes 100
-        .default_version = 100,
+        .default_version = args.named.@"default-version",
         // Poorly documented, reference exe always passes no profile
         .default_profile = c.GLSLANG_NO_PROFILE,
         .force_default_version_and_profile = c.false,
@@ -355,6 +369,8 @@ fn compile(
 
     const shader = c.glslang_shader_create(&input) orelse @panic("OOM");
     defer c.glslang_shader_delete(shader);
+
+    if (preamble) |p| c.glslang_shader_set_preamble(shader, p);
 
     if (c.glslang_shader_preprocess(shader, &input) == c.false) {
         compilationFailed(shader, "preprocessing", args.positional.INPUT);
