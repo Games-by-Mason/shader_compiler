@@ -741,8 +741,10 @@ const Callbacks = struct {
         if (!checkDepthAndPath(depth, header_name, false)) return null;
 
         // Get the current directory path, or skip local includes if there is none. This conforms
-        // with the `ARB_shading_language_include` specification.
-        const dir_path = std.fs.path.dirnamePosix(includer_name) orelse return null;
+        // with the `ARB_shading_language_include` specification. We need to use `dirname` not
+        // `dirnamePosix` here, because on Windows the includer name may include backslashes even if
+        // we never use them in the shaders.
+        const dir_path = std.fs.path.dirname(includer_name) orelse return null;
 
         // If we're an absolute path, skip local includes.
         if (header_name.len > 0 and header_name[0] == '/') return null;
