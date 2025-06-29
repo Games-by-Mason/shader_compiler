@@ -166,9 +166,17 @@ const command: Command = .{
             .long = "write-deps",
             .default = .{ .value = null },
         }),
-        NamedArg.init(?[]const u8, .{
+        NamedArg.initAccum([]const u8, .{
             .long = "preamble",
-            .default = .{ .value = null },
+        }),
+        // Defines come after the preamble, and there's no undefine or option for the value. If you
+        // need more complex define and undefine logic, you can work around this by baking it into
+        // the preamble file. This limitation, in particular the ordering limitation, is due to the
+        // way we handle argument parsing and may be resolved in the future:
+        //
+        // https://github.com/Games-by-Mason/structopt/issues/12
+        NamedArg.initAccum([]const u8, .{
+            .long = "define",
         }),
         // Required for preamble to be useful
         NamedArg.init(i32, .{
@@ -219,10 +227,35 @@ pub fn main() void {
     const source = readSource(allocator, cwd, args.positional.INPUT);
     defer allocator.free(source);
 
-    const preamble = if (args.named.preamble) |path| b: {
-        break :b readSource(allocator, cwd, path);
-    } else null;
-    defer if (preamble) |p| allocator.free(p);
+    const preamble = b: {
+        var preamble: std.ArrayList(u8) = .init(allocator);
+        defer preamble.deinit();
+        for (args.named.preamble.items) |path| {
+            const contents = openSource(cwd, path);
+            defer contents.close();
+            const contents_reader = contents.reader();
+            contents_reader.readAllArrayListAligned(.@"1", &preamble, 8192) catch |err| {
+                if (err == error.OutOfMemory) @panic("OOM");
+                log.err("{s}: {s}", .{ path, @errorName(err) });
+                std.process.exit(1);
+            };
+        }
+
+        const preamble_writer = preamble.writer();
+        for (args.named.define.items) |def| {
+            if (std.mem.indexOfScalar(u8, def, '=')) |i| {
+                preamble_writer.print("#define {s} {s}\n", .{
+                    def[0..i],
+                    def[i + 1 ..],
+                }) catch @panic("OOM");
+            } else {
+                preamble_writer.print("#define {s}\n", .{def}) catch @panic("OOM");
+            }
+        }
+
+        break :b preamble.toOwnedSliceSentinel(0) catch @panic("OOM");
+    };
+    defer allocator.free(preamble);
 
     const compiled = compile(allocator, source, preamble, args);
     defer allocator.free(compiled);
@@ -237,15 +270,19 @@ pub fn main() void {
     writeSpirv(cwd, args.positional.OUTPUT, remapped);
 }
 
+fn openSource(dir: std.fs.Dir, path: []const u8) File {
+    return dir.openFile(path, .{}) catch |err| {
+        log.err("{s}: {s}", .{ path, @errorName(err) });
+        std.process.exit(1);
+    };
+}
+
 fn readSource(
     gpa: Allocator,
     dir: std.fs.Dir,
     path: []const u8,
 ) [:0]const u8 {
-    var file = dir.openFile(path, .{}) catch |err| {
-        log.err("{s}: {s}", .{ path, @errorName(err) });
-        std.process.exit(1);
-    };
+    var file = openSource(dir, path);
     defer file.close();
 
     return file.readToEndAllocOptions(gpa, max_file_len, null, .@"1", 0) catch |err| {
