@@ -230,7 +230,7 @@ pub fn main() void {
     const optimized = optimize(compiled, args);
     defer optimizeFree(optimized);
 
-    const remapped = if (args.named.remap) remap(optimized) else compiled;
+    const remapped = if (args.named.remap) remap(optimized) else optimized;
 
     validate(args.positional.INPUT, remapped, args);
 
