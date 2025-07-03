@@ -36,6 +36,23 @@ const SpirvVersion = enum {
     @"1.6",
 };
 
+const Stage = enum(c_uint) {
+    vert = c.GLSLANG_STAGE_VERTEX,
+    tesc = c.GLSLANG_STAGE_TESSCONTROL,
+    tese = c.GLSLANG_STAGE_TESSEVALUATION,
+    geom = c.GLSLANG_STAGE_GEOMETRY,
+    frag = c.GLSLANG_STAGE_FRAGMENT,
+    comp = c.GLSLANG_STAGE_COMPUTE,
+    rgen = c.GLSLANG_STAGE_RAYGEN,
+    rint = c.GLSLANG_STAGE_INTERSECT,
+    rahit = c.GLSLANG_STAGE_ANYHIT,
+    rchit = c.GLSLANG_STAGE_CLOSESTHIT,
+    rmiss = c.GLSLANG_STAGE_MISS,
+    rcall = c.GLSLANG_STAGE_CALLABLE,
+    task = c.GLSLANG_STAGE_TASK,
+    mesh = c.GLSLANG_STAGE_MESH,
+};
+
 const command: Command = .{
     .name = "shader_compiler",
     .named_args = &.{
@@ -164,6 +181,10 @@ const command: Command = .{
         }),
         NamedArg.init(?[]const u8, .{
             .long = "write-deps",
+            .default = .{ .value = null },
+        }),
+        NamedArg.init(?Stage, .{
+            .long = "stage",
             .default = .{ .value = null },
         }),
         NamedArg.initAccum([]const u8, .{
@@ -300,27 +321,20 @@ fn compile(
     const cwd = std.fs.cwd();
 
     const stage = b: {
-        const stages = std.StaticStringMap(c_uint).initComptime(.{
-            .{ ".vert", c.GLSLANG_STAGE_VERTEX },
-            .{ ".tesc", c.GLSLANG_STAGE_TESSCONTROL },
-            .{ ".tese", c.GLSLANG_STAGE_TESSEVALUATION },
-            .{ ".geom", c.GLSLANG_STAGE_GEOMETRY },
-            .{ ".frag", c.GLSLANG_STAGE_FRAGMENT },
-            .{ ".comp", c.GLSLANG_STAGE_COMPUTE },
-            .{ ".rgen", c.GLSLANG_STAGE_RAYGEN },
-            .{ ".rint", c.GLSLANG_STAGE_INTERSECT },
-            .{ ".rahit", c.GLSLANG_STAGE_ANYHIT },
-            .{ ".rchit", c.GLSLANG_STAGE_CLOSESTHIT },
-            .{ ".rmiss", c.GLSLANG_STAGE_MISS },
-            .{ ".rcall", c.GLSLANG_STAGE_CALLABLE },
-            .{ ".task", c.GLSLANG_STAGE_TASK },
-            .{ ".mesh", c.GLSLANG_STAGE_MESH },
-        });
+        if (args.named.stage) |stage| break :b stage;
+
+        const enum_fields = @typeInfo(Stage).@"enum".fields;
+        comptime var kvs_list: [enum_fields.len]struct { []const u8, Stage } = undefined;
+        inline for (enum_fields, 0..) |field, i| {
+            kvs_list[i] = .{ field.name, @enumFromInt(field.value) };
+        }
+        const stages = std.StaticStringMap(Stage).initComptime(kvs_list);
+
         const period = std.mem.lastIndexOfScalar(u8, args.positional.INPUT, '.') orelse {
             log.err("{s}: shader missing extension", .{args.positional.INPUT});
             std.process.exit(1);
         };
-        const extension = args.positional.INPUT[period..];
+        const extension = args.positional.INPUT[period + 1 ..];
         const stage = stages.get(extension) orelse {
             log.err("{s}: unknown extension", .{args.positional.INPUT});
             std.process.exit(1);
@@ -355,7 +369,7 @@ fn compile(
     };
     const input: c.glslang_input_t = .{
         .language = c.GLSLANG_SOURCE_GLSL,
-        .stage = stage,
+        .stage = @intFromEnum(stage),
         .client = switch (args.named.target) {
             .@"Vulkan-1.0",
             .@"Vulkan-1.1",
@@ -429,8 +443,8 @@ fn compile(
         compilationFailed(shader, "linking", args.positional.INPUT);
     }
 
-    c.glslang_program_set_source_file(program, stage, args.positional.INPUT);
-    c.glslang_program_add_source_text(program, stage, source, source.len);
+    c.glslang_program_set_source_file(program, @intFromEnum(stage), args.positional.INPUT);
+    c.glslang_program_add_source_text(program, @intFromEnum(stage), source, source.len);
 
     var options: c.glslang_spv_options_t = .{
         .generate_debug_info = args.named.debug,
@@ -444,7 +458,7 @@ fn compile(
         .compile_only = false,
         .optimize_allow_expanded_id_bound = false,
     };
-    c.glslang_program_SPIRV_generate_with_options(program, stage, &options);
+    c.glslang_program_SPIRV_generate_with_options(program, @intFromEnum(stage), &options);
 
     const size = c.glslang_program_SPIRV_get_size(program);
     const buf = gpa.alloc(u32, size) catch @panic("OOM");
