@@ -1,6 +1,7 @@
 const std = @import("std");
 const structopt = @import("structopt");
-const log = std.log.scoped(.shader_compiler);
+const log_scope = .shader_compiler;
+const log = std.log.scoped(log_scope);
 const c = @import("c.zig").c;
 const assert = std.debug.assert;
 
@@ -203,6 +204,10 @@ const command: Command = .{
         NamedArg.init(i32, .{
             .long = "default-version",
             .default = .{ .value = 100 },
+        }),
+        NamedArg.init(bool, .{
+            .long = "warnings-as-errors",
+            .default = .{ .value = true },
         }),
     },
     .positional_args = &.{
@@ -423,12 +428,12 @@ fn compile(
 
     if (preamble) |p| c.glslang_shader_set_preamble(shader, p);
 
-    if (c.glslang_shader_preprocess(shader, &input) == c.false) {
-        compilationFailed(shader, "preprocessing", args.positional.INPUT);
+    if (c.glslang_shader_preprocess(shader, &input) != c.true) {
+        writeGlslMessages(shader, null, "preprocessor", &args, true);
     }
 
-    if (c.glslang_shader_parse(shader, &input) == c.false) {
-        compilationFailed(shader, "parsing", args.positional.INPUT);
+    if (c.glslang_shader_parse(shader, &input) != c.true) {
+        writeGlslMessages(shader, null, "parser", &args, true);
     }
 
     const program: *c.glslang_program_t = c.glslang_program_create() orelse @panic("OOM");
@@ -439,8 +444,8 @@ fn compile(
     if (c.glslang_program_link(
         program,
         c.GLSLANG_MSG_SPV_RULES_BIT | c.GLSLANG_MSG_VULKAN_RULES_BIT,
-    ) == c.false) {
-        compilationFailed(shader, "linking", args.positional.INPUT);
+    ) != c.true) {
+        writeGlslMessages(shader, program, "linker", &args, true);
     }
 
     c.glslang_program_set_source_file(program, @intFromEnum(stage), args.positional.INPUT);
@@ -465,9 +470,7 @@ fn compile(
     errdefer gpa.free(buf);
     c.glslang_program_SPIRV_get(program, buf.ptr);
 
-    if (c.glslang_program_SPIRV_get_messages(program)) |msgs| {
-        writeGlslMessages(log.info, args.positional.INPUT, msgs);
-    }
+    writeGlslMessages(shader, program, "codegen", &args, false);
 
     return buf[0..size];
 }
@@ -669,19 +672,54 @@ fn writeSpirv(dir: std.fs.Dir, path: []const u8, spirv: []const u32) void {
     };
 }
 
-fn writeGlslMessages(
-    write: fn (comptime []const u8, anytype) void,
-    path: []const u8,
-    raw: [*:0]const u8,
-) void {
+fn writeGlslMessageList(path: []const u8, raw: [*:0]const u8) std.enums.EnumSet(std.log.Level) {
+    var levels: std.enums.EnumSet(std.log.Level) = .initEmpty();
     const span = std.mem.span(raw);
     var iter = std.mem.splitScalar(u8, span, '\n');
     while (iter.next()) |line| {
         if (line.len == 0) continue;
 
-        const error_prefix = "ERROR: ";
-        const start = if (std.mem.startsWith(u8, line, error_prefix)) error_prefix.len else 0;
-        const prefix_removed = line[start..];
+        const level: std.log.Level, const level_ex: []const u8, const prefix_removed = b: {
+            // See `InfoSink.h`
+            {
+                const prefix = "WARNING: ";
+                if (std.mem.startsWith(u8, line, prefix)) {
+                    break :b .{ .warn, "", line[prefix.len..] };
+                }
+            }
+
+            {
+                const prefix = "ERROR: ";
+                if (std.mem.startsWith(u8, line, prefix)) {
+                    break :b .{ .err, "", line[prefix.len..] };
+                }
+            }
+
+            {
+                const prefix = "INTERNAL ERROR: ";
+                if (std.mem.startsWith(u8, line, prefix)) {
+                    break :b .{ .err, "internal error: ", line[prefix.len..] };
+                }
+            }
+
+            {
+                const prefix = "UNIMPLEMENTED: ";
+                if (std.mem.startsWith(u8, line, prefix)) {
+                    break :b .{ .err, "unimplemented: ", line[prefix.len..] };
+                }
+            }
+
+            {
+                const prefix = "NOTE: ";
+                if (std.mem.startsWith(u8, line, prefix)) {
+                    break :b .{ .info, "note: ", line[prefix.len..] };
+                }
+            }
+
+            break :b .{ .info, "", line };
+        };
+
+        levels.insert(level);
 
         const location = if (std.mem.indexOfScalar(u8, prefix_removed, ' ')) |i| b: {
             const location = prefix_removed[0..i];
@@ -696,19 +734,50 @@ fn writeGlslMessages(
             break :b location;
         } else "";
         const message = std.mem.trim(u8, prefix_removed[location.len..], " ");
-        write("{s}:{s} {s}", .{ path, location, message });
+        const format = "{s}:{s} {s}{s}";
+        const args = .{ path, location, level_ex, message };
+        switch (level) {
+            inline else => |l| std.options.logFn(l, log_scope, format, args),
+        }
     }
+    return levels;
 }
 
-fn compilationFailed(
-    shader: *c.struct_glslang_shader_s,
+fn writeGlslMessages(
+    shader: ?*c.struct_glslang_shader_s,
+    program: ?*c.glslang_program_t,
     step: []const u8,
-    path: []const u8,
-) noreturn {
-    log.err("{s}: {s} failed", .{ path, step });
-    writeGlslMessages(log.err, path, c.glslang_shader_get_info_log(shader));
-    writeGlslMessages(log.err, path, c.glslang_shader_get_info_debug_log(shader));
-    std.process.exit(1);
+    args: *const command.Result(),
+    fatal: bool,
+) void {
+    var levels: std.enums.EnumSet(std.log.Level) = .initEmpty();
+    if (shader) |s| {
+        levels.setUnion(
+            writeGlslMessageList(args.positional.INPUT, c.glslang_shader_get_info_log(s)),
+        );
+    }
+    if (program) |p| {
+        levels.setUnion(
+            writeGlslMessageList(args.positional.INPUT, c.glslang_program_get_info_log(p)),
+        );
+        if (c.glslang_program_SPIRV_get_messages(program)) |msgs| {
+            levels.setUnion(writeGlslMessageList(args.positional.INPUT, msgs));
+        }
+    }
+
+    if (levels.contains(.err)) {
+        log.err("{s}: {s} failed", .{ args.positional.INPUT, step });
+        std.process.exit(1);
+    } else if (fatal) {
+        @panic("glslang reported a fatal error with no errors");
+    }
+
+    if (levels.contains(.warn) and args.named.@"warnings-as-errors") {
+        log.err("{s}: encountered warnings without setting --no-warnings-as-errors", .{
+            args.positional.INPUT,
+        });
+        std.process.exit(1);
+    }
 }
 
 fn logFn(
