@@ -283,7 +283,23 @@ pub fn main() void {
     };
     defer allocator.free(preamble);
 
-    const compiled = compile(allocator, source, preamble, args);
+    const deps_file = if (args.named.@"write-deps") |path| cwd.createFile(path, .{}) catch |err| {
+        log.err("{s}: {s}", .{ path, @errorName(err) });
+        std.process.exit(1);
+    } else null;
+    defer if (deps_file) |f| {
+        f.sync() catch |err| @panic(@errorName(err));
+        f.close();
+    };
+    var deps_buf: [128]u8 = undefined;
+    var deps_writer = if (deps_file) |f| f.writerStreaming(&deps_buf) else null;
+    defer if (deps_writer) |*w| w.interface.flush() catch |err| @panic(@errorName(err));
+    if (deps_writer) |*f| {
+        f.interface.print("{s}: ", .{args.positional.OUTPUT}) catch |err| @panic(@errorName(err));
+    }
+    const deps_writer_interface = if (deps_writer) |*w| &w.interface else null;
+
+    const compiled = compile(allocator, source, preamble, args, deps_writer_interface);
     defer allocator.free(compiled);
 
     const optimized = optimize(compiled, args);
@@ -322,6 +338,7 @@ fn compile(
     source: [:0]const u8,
     preamble: ?[:0]const u8,
     args: command.Result(),
+    deps_writer: ?*std.Io.Writer,
 ) []u32 {
     const cwd = std.fs.cwd();
 
@@ -352,21 +369,6 @@ fn compile(
             log.err("include-path: {s}: {}", .{ path, err });
             std.process.exit(1);
         };
-    }
-
-    const deps_file = if (args.named.@"write-deps") |path| cwd.createFile(path, .{}) catch |err| {
-        log.err("{s}: {s}", .{ path, @errorName(err) });
-        std.process.exit(1);
-    } else null;
-    defer if (deps_file) |f| {
-        f.sync() catch |err| @panic(@errorName(err));
-        f.close();
-    };
-    var deps_buf: [128]u8 = undefined;
-    var deps_writer = if (deps_file) |f| f.writerStreaming(&deps_buf) else null;
-    defer if (deps_writer) |*w| w.interface.flush() catch |err| @panic(@errorName(err));
-    if (deps_writer) |*f| {
-        f.interface.print("{s}: ", .{args.positional.OUTPUT}) catch |err| @panic(@errorName(err));
     }
 
     var callbacks: Callbacks = .{
@@ -819,7 +821,7 @@ fn logFn(
 const Callbacks = struct {
     gpa: std.mem.Allocator,
     include_paths: []const []const u8,
-    deps_writer: ?File.Writer,
+    deps_writer: ?*std.Io.Writer,
 
     pub fn includeSystem(
         ctx: ?*anyopaque,
@@ -954,14 +956,15 @@ const Callbacks = struct {
         defer file.close();
 
         // Write the include path to the deps file
-        if (self.deps_writer) |*deps_writer| {
+        if (self.deps_writer) |deps_writer| {
+            deps_writer.writeAll("\\\n    ") catch |err| cppPanic(@errorName(err));
             for (path) |char| {
                 if (char == ' ') {
-                    deps_writer.interface.writeByte('\\') catch |err| cppPanic(@errorName(err));
+                    deps_writer.writeByte('\\') catch |err| cppPanic(@errorName(err));
                 }
-                deps_writer.interface.writeByte(char) catch |err| cppPanic(@errorName(err));
+                deps_writer.writeByte(char) catch |err| cppPanic(@errorName(err));
             }
-            deps_writer.interface.writeByte(' ') catch |err| cppPanic(@errorName(err));
+            deps_writer.writeByte(' ') catch |err| cppPanic(@errorName(err));
         }
 
         // Return the result
