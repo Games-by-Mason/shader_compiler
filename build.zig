@@ -10,9 +10,11 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "shader_compiler",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const structopt = b.dependency("structopt", .{
@@ -29,10 +31,12 @@ pub fn build(b: *std.Build) void {
     exe.root_module.linkLibrary(glslang.artifact("glslang"));
     exe.root_module.linkLibrary(glslang.artifact("SPIRV-Tools"));
 
-    const remap = b.addStaticLibrary(.{
+    const remap = b.addLibrary(.{
         .name = "remap",
-        .target = target,
-        .optimize = optimize_external,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize_external,
+        }),
     });
     remap.addCSourceFile(.{
         .file = b.path("src/remap.cpp"),

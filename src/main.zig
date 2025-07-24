@@ -254,32 +254,32 @@ pub fn main() void {
     defer allocator.free(source);
 
     const preamble = b: {
-        var preamble: std.ArrayList(u8) = .init(allocator);
-        defer preamble.deinit();
+        var buf: [128]u8 = undefined;
+        var preamble: std.ArrayListUnmanaged(u8) = .empty;
+        defer preamble.deinit(allocator);
         for (args.named.preamble.items) |path| {
             const contents = openSource(cwd, path);
             defer contents.close();
-            const contents_reader = contents.reader();
-            contents_reader.readAllArrayListAligned(.@"1", &preamble, 8192) catch |err| {
+            var contents_reader = contents.readerStreaming(&buf);
+            contents_reader.interface.appendRemaining(allocator, .@"1", &preamble, .unlimited) catch |err| {
                 if (err == error.OutOfMemory) @panic("OOM");
                 log.err("{s}: {s}", .{ path, @errorName(err) });
                 std.process.exit(1);
             };
         }
 
-        const preamble_writer = preamble.writer();
         for (args.named.define.items) |def| {
             if (std.mem.indexOfScalar(u8, def, '=')) |i| {
-                preamble_writer.print("#define {s} {s}\n", .{
+                preamble.print(allocator, "#define {s} {s}\n", .{
                     def[0..i],
                     def[i + 1 ..],
                 }) catch @panic("OOM");
             } else {
-                preamble_writer.print("#define {s}\n", .{def}) catch @panic("OOM");
+                preamble.print(allocator, "#define {s}\n", .{def}) catch @panic("OOM");
             }
         }
 
-        break :b preamble.toOwnedSliceSentinel(0) catch @panic("OOM");
+        break :b preamble.toOwnedSliceSentinel(allocator, 0) catch @panic("OOM");
     };
     defer allocator.free(preamble);
 
@@ -362,9 +362,11 @@ fn compile(
         f.sync() catch |err| @panic(@errorName(err));
         f.close();
     };
-    const deps_writer = if (deps_file) |f| f.writer() else null;
-    if (deps_writer) |f| {
-        f.print("{s}: ", .{args.positional.OUTPUT}) catch |err| @panic(@errorName(err));
+    var deps_buf: [128]u8 = undefined;
+    var deps_writer = if (deps_file) |f| f.writerStreaming(&deps_buf) else null;
+    defer if (deps_writer) |*w| w.interface.flush() catch |err| @panic(@errorName(err));
+    if (deps_writer) |*f| {
+        f.interface.print("{s}: ", .{args.positional.OUTPUT}) catch |err| @panic(@errorName(err));
     }
 
     var callbacks: Callbacks = .{
@@ -795,25 +797,22 @@ fn logFn(
     };
     const reset = "\x1b[0m";
     const level_txt = comptime message_level.asText();
-    const stderr = std.io.getStdErr().writer();
-    var bw = std.io.bufferedWriter(stderr);
-    const writer = bw.writer();
 
-    std.debug.lockStdErr();
-    defer std.debug.unlockStdErr();
+    var buffer: [64]u8 = undefined;
+    var stderr = std.debug.lockStderrWriter(&buffer);
+    defer std.debug.unlockStderrWriter();
     nosuspend {
         var wrote_prefix = false;
         if (message_level != .info) {
-            writer.writeAll(bold ++ color ++ level_txt ++ reset) catch return;
+            stderr.writeAll(bold ++ color ++ level_txt ++ reset) catch return;
             wrote_prefix = true;
         }
-        if (message_level == .err) writer.writeAll(bold) catch return;
+        if (message_level == .err) stderr.writeAll(bold) catch return;
         if (wrote_prefix) {
-            writer.writeAll(": ") catch return;
+            stderr.writeAll(": ") catch return;
         }
-        writer.print(format ++ "\n", args) catch return;
-        writer.writeAll(reset) catch return;
-        bw.flush() catch return;
+        stderr.print(format ++ "\n", args) catch return;
+        stderr.writeAll(reset) catch return;
     }
 }
 
@@ -827,7 +826,7 @@ const Callbacks = struct {
         header_path_c: [*c]const u8,
         includer_name: [*c]const u8,
         depth: usize,
-    ) callconv(.C) ?*c.glsl_include_result_t {
+    ) callconv(.c) ?*c.glsl_include_result_t {
         const self: *Callbacks = @ptrCast(@alignCast(ctx));
         const header_path = std.mem.span(header_path_c);
         _ = includer_name;
@@ -853,7 +852,7 @@ const Callbacks = struct {
         header_name_c: [*c]const u8,
         includer_name_c: [*c]const u8,
         depth: usize,
-    ) callconv(.C) ?*c.glsl_include_result_t {
+    ) callconv(.c) ?*c.glsl_include_result_t {
         const self: *Callbacks = @ptrCast(@alignCast(ctx));
         const header_name = std.mem.span(header_name_c);
         const includer_name = std.mem.span(includer_name_c);
@@ -887,7 +886,7 @@ const Callbacks = struct {
     fn freeIncludeResult(
         ctx_c: ?*anyopaque,
         results: [*c]c.glsl_include_result_t,
-    ) callconv(.C) c_int {
+    ) callconv(.c) c_int {
         const ctx: *const Callbacks = @ptrCast(@alignCast(ctx_c));
         const result = &results[0];
         ctx.gpa.free(@as([:0]const u8, @ptrCast(result.header_data[0..result.header_length])));
@@ -955,14 +954,14 @@ const Callbacks = struct {
         defer file.close();
 
         // Write the include path to the deps file
-        if (self.deps_writer) |deps_writer| {
+        if (self.deps_writer) |*deps_writer| {
             for (path) |char| {
                 if (char == ' ') {
-                    deps_writer.writeByte('\\') catch |err| cppPanic(@errorName(err));
+                    deps_writer.interface.writeByte('\\') catch |err| cppPanic(@errorName(err));
                 }
-                deps_writer.writeByte(char) catch |err| cppPanic(@errorName(err));
+                deps_writer.interface.writeByte(char) catch |err| cppPanic(@errorName(err));
             }
-            deps_writer.writeByte(' ') catch |err| cppPanic(@errorName(err));
+            deps_writer.interface.writeByte(' ') catch |err| cppPanic(@errorName(err));
         }
 
         // Return the result
