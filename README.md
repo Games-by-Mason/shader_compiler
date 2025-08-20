@@ -69,3 +69,6 @@ You can now include files in your shaders:
 
 For details on inclusion syntax and path resolution, see the [extension specification](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_shading_language_include.txt).
 
+# Usage as a library
+
+See `root.zig` for calling the compiler directly from Zig.

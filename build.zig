@@ -8,12 +8,24 @@ pub fn build(b: *std.Build) void {
         else => optimize,
     };
 
+    const mod = b.addModule("shader_compiler", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe = b.addExecutable(.{
         .name = "shader_compiler",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{
+                    .name = "shader_compiler",
+                    .module = mod,
+                },
+            },
         }),
     });
 
@@ -28,8 +40,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize_external,
         .@"enable-opt" = true,
     });
-    exe.root_module.linkLibrary(glslang.artifact("glslang"));
-    exe.root_module.linkLibrary(glslang.artifact("SPIRV-Tools"));
+    mod.linkLibrary(glslang.artifact("glslang"));
+    mod.linkLibrary(glslang.artifact("SPIRV-Tools"));
 
     const remap = b.addLibrary(.{
         .name = "remap",
@@ -48,7 +60,7 @@ pub fn build(b: *std.Build) void {
     });
     remap.linkLibrary(glslang.artifact("SPVRemapper"));
     remap.installHeader(b.path("src/remap.h"), "glslang/SPIRV/spv_remapper_c_interface.h");
-    exe.root_module.linkLibrary(remap);
+    mod.linkLibrary(remap);
 
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);
