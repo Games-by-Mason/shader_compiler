@@ -89,9 +89,8 @@ pub const Validate = struct {
 
 pub const Compile = struct {
     input_path: [:0]const u8,
-    output_path: [:0]const u8,
+    output_path: []const u8,
     include_path: []const []const u8 = &.{},
-    write_deps: ?[]const u8 = null,
     preamble: []const []const u8 = &.{},
     defines: []const []const u8 = &.{},
     default_version: i32 = 100,
@@ -100,6 +99,7 @@ pub const Compile = struct {
     debug: bool = false,
     target: Target,
     spirv_version: SpirvVersion = .default,
+    allow_uppercase_paths: bool = false,
 };
 
 pub const Options = struct {
@@ -112,7 +112,12 @@ pub const Options = struct {
 const max_file_len = 400000;
 const max_include_depth = 255;
 
-pub fn compile(gpa: Allocator, dir: Dir, options: Options) error{Compile}!void {
+pub fn compile(
+    gpa: Allocator,
+    dir: Dir,
+    deps: *std.Io.Writer,
+    options: Options,
+) error{Compile}![]u32 {
     if (c.glslang_initialize_process() == c.false) @panic("glslang_initialize_process failed");
     defer c.glslang_finalize_process();
 
@@ -149,33 +154,42 @@ pub fn compile(gpa: Allocator, dir: Dir, options: Options) error{Compile}!void {
     };
     defer gpa.free(preamble);
 
-    const deps_file = if (options.compile.write_deps) |path| dir.createFile(path, .{}) catch |err| {
-        log.err("{s}: {s}", .{ path, @errorName(err) });
-        return error.Compile;
-    } else null;
-    defer if (deps_file) |f| {
-        f.sync() catch |err| @panic(@errorName(err));
-        f.close();
-    };
-    var deps_buf: [128]u8 = undefined;
-    var deps_writer = if (deps_file) |f| f.writerStreaming(&deps_buf) else null;
-    defer if (deps_writer) |*w| w.interface.flush() catch |err| @panic(@errorName(err));
-    if (deps_writer) |*f| {
-        f.interface.print("{s}: ", .{options.compile.output_path}) catch |err| @panic(@errorName(err));
+    defer {
+        deps.writeByte('\n') catch |err| @panic(@errorName(err));
+        deps.flush() catch |err| @panic(@errorName(err));
     }
-    const deps_writer_interface = if (deps_writer) |*w| &w.interface else null;
+    {
+        // We're being overly conservative by forcing the output path to conform the the GLSL
+        // include path rules, but this makes escaping it in the dep file much simpler. In practice
+        // you are probably asking for trouble if you try to ship paths with other characters
+        // anyway, however if you hit this in a real use case feel free to open an issue and I'll
+        // reconsider!
+        if (!checkPath(
+            "output path",
+            options.compile.output_path,
+            options.compile.allow_uppercase_paths,
+        )) {
+            return error.Compile;
+        }
+        writeDepPath(deps, options.compile.output_path) catch |err| @panic(@errorName(err));
+        deps.writeAll(": ") catch |err| @panic(@errorName(err));
+    }
 
-    const compiled = try compileImpl(gpa, dir, source, preamble, &options, deps_writer_interface);
+    const compiled = try compileImpl(gpa, dir, source, preamble, &options, deps);
     defer gpa.free(compiled);
 
     const optimized = try optimize(compiled, options.compile.target, options.optimize);
-    defer optimizeFree(optimized);
+    errdefer freeSpirv(optimized);
 
     const remapped = if (options.remap) remap(optimized) else optimized;
 
     try validate(options.compile.input_path, remapped, options.compile.target, options.validate);
 
-    try writeSpirv(dir, options.compile.output_path, remapped);
+    return remapped;
+}
+
+pub fn freeSpirv(code: []u32) void {
+    c.free(code.ptr);
 }
 
 fn openSource(dir: Dir, path: []const u8) !File {
@@ -205,7 +219,7 @@ fn compileImpl(
     source: [:0]const u8,
     preamble: ?[:0]const u8,
     options: *const Options,
-    deps_writer: ?*std.Io.Writer,
+    deps: *std.Io.Writer,
 ) ![]u32 {
     const stage = b: {
         if (options.compile.stage) |stage| break :b stage;
@@ -239,8 +253,9 @@ fn compileImpl(
     var callbacks: Callbacks = .{
         .gpa = gpa,
         .include_paths = options.compile.include_path,
-        .deps_writer = deps_writer,
+        .deps = deps,
         .dir = dir,
+        .allow_uppercase_paths = options.compile.allow_uppercase_paths,
     };
     const input: c.glslang_input_t = .{
         .language = c.GLSLANG_SOURCE_GLSL,
@@ -372,10 +387,6 @@ fn optimize(spirv: []u32, target: Target, options: Optimize) ![]u32 {
         optimizer_options,
     ) != c.SPV_SUCCESS) @panic("spvOptimizerRun failed");
     return optimized_binary.?.*.code[0..optimized_binary.?.*.wordCount];
-}
-
-fn optimizeFree(code: []u32) void {
-    c.free(code.ptr);
 }
 
 fn remap(spirv: []u32) []u32 {
@@ -520,22 +531,6 @@ fn validate(path: []const u8, spirv: []u32, target: Target, options: Validate) !
         }
         return error.Compile;
     }
-}
-
-fn writeSpirv(dir: Dir, path: []const u8, spirv: []const u32) !void {
-    var file = dir.createFile(path, .{}) catch |err| {
-        log.err("{s}: {s}", .{ path, @errorName(err) });
-        return error.Compile;
-    };
-    defer {
-        file.sync() catch |err| @panic(@errorName(err));
-        file.close();
-    }
-
-    file.writeAll(std.mem.sliceAsBytes(spirv)) catch |err| {
-        log.err("{s}: {s}", .{ path, @errorName(err) });
-        return error.Compile;
-    };
 }
 
 fn writeGlslMessageList(path: []const u8, raw: [*:0]const u8) std.enums.EnumSet(std.log.Level) {
@@ -683,8 +678,9 @@ fn logFn(
 const Callbacks = struct {
     gpa: std.mem.Allocator,
     include_paths: []const []const u8,
-    deps_writer: ?*std.Io.Writer,
+    deps: *std.Io.Writer,
     dir: Dir,
+    allow_uppercase_paths: bool,
 
     pub fn includeSystem(
         ctx: ?*anyopaque,
@@ -696,7 +692,7 @@ const Callbacks = struct {
         const header_path = std.mem.span(header_path_c);
         _ = includer_name;
 
-        if (!checkDepthAndPath(depth, header_path, true)) return null;
+        if (!self.checkDepthAndPath(depth, header_path, true)) return null;
 
         if (self.include_paths.len == 0) {
             log.err("include path not set", .{});
@@ -722,7 +718,7 @@ const Callbacks = struct {
         const header_name = std.mem.span(header_name_c);
         const includer_name = std.mem.span(includer_name_c);
 
-        if (!checkDepthAndPath(depth, header_name, false)) return null;
+        if (!self.checkDepthAndPath(depth, header_name, false)) return null;
 
         // Get the current directory path, or skip local includes if there is none. This conforms
         // with the `ARB_shading_language_include` specification. We need to use `dirname` not
@@ -760,34 +756,22 @@ const Callbacks = struct {
         return 0;
     }
 
-    fn checkDepthAndPath(depth: usize, path: []const u8, diagnostic: bool) bool {
+    fn checkDepthAndPath(
+        self: *const @This(),
+        depth: usize,
+        path: []const u8,
+        diagnostic: bool,
+    ) bool {
         if (depth > max_include_depth) {
             log.err("exceeded max include depth ({})", .{max_include_depth});
             return false;
         }
 
-        var lastWasSlash = false;
-        for (path) |char| {
-            switch (char) {
-                '/' => if (lastWasSlash) {
-                    if (diagnostic) {
-                        log.err("include path contains illegal substring: \"//\"", .{});
-                    }
-                    return false;
-                } else {
-                    lastWasSlash = true;
-                },
-                'a'...'z', 'A'...'Z', '_', '0'...'9', '.', ' ' => lastWasSlash = false,
-                else => {
-                    if (diagnostic) {
-                        log.err("include path contains illegal character: '{c}'", .{char});
-                    }
-                    return false;
-                },
-            }
-        }
-
-        return true;
+        return checkPath(
+            if (diagnostic) "include path" else null,
+            path,
+            self.allow_uppercase_paths,
+        );
     }
 
     fn cppPanic(message: []const u8) noreturn {
@@ -819,15 +803,10 @@ const Callbacks = struct {
         defer file.close();
 
         // Write the include path to the deps file
-        if (self.deps_writer) |deps_writer| {
-            deps_writer.writeAll("\\\n    ") catch |err| cppPanic(@errorName(err));
-            for (path) |char| {
-                if (char == ' ') {
-                    deps_writer.writeByte('\\') catch |err| cppPanic(@errorName(err));
-                }
-                deps_writer.writeByte(char) catch |err| cppPanic(@errorName(err));
-            }
-            deps_writer.writeByte(' ') catch |err| cppPanic(@errorName(err));
+        {
+            self.deps.writeAll("\\\n    ") catch |err| cppPanic(@errorName(err));
+            writeDepPath(self.deps, path) catch |err| cppPanic(@errorName(err));
+            self.deps.writeByte(' ') catch |err| cppPanic(@errorName(err));
         }
 
         // Return the result
@@ -847,3 +826,49 @@ const Callbacks = struct {
         return result;
     }
 };
+
+/// This check is more conservative than the spec calls for, but many of the other allowed
+/// characters are not supported by many file systems anyway.
+fn checkPath(diagnostic: ?[]const u8, path: []const u8, allow_uppercase: bool) bool {
+    var lastWasSlash = false;
+    for (path) |char| {
+        switch (char) {
+            '/' => if (lastWasSlash) {
+                if (diagnostic) |source| {
+                    log.err("{s}: {s} contains illegal substring: \"//\"", .{ path, source });
+                }
+                return false;
+            } else {
+                lastWasSlash = true;
+            },
+            'a'...'z', '-', '_', '0'...'9', '.', ' ' => lastWasSlash = false,
+            'A'...'Z' => if (!allow_uppercase) {
+                if (diagnostic) |source| {
+                    log.err(
+                        "{s}: {s} contains upper case characters without uppercase path support enabled",
+                        .{ path, source },
+                    );
+                }
+                return false;
+            },
+            else => {
+                if (diagnostic) |source| {
+                    log.err("{s}: {s} contains illegal character: '{c}'", .{ path, source, char });
+                }
+                return false;
+            },
+        }
+    }
+
+    return true;
+}
+
+/// Writes a path to a dep file, escaping spaces. Assumes it passes `checkPath`.
+fn writeDepPath(deps: *std.Io.Writer, path: []const u8) !void {
+    for (path) |char| {
+        if (char == ' ') {
+            try deps.writeByte('\\');
+        }
+        try deps.writeByte(char);
+    }
+}

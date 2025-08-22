@@ -173,6 +173,12 @@ const command: Command = .{
             .long = "warnings-as-errors",
             .default = .{ .value = true },
         }),
+        // The spec allows it, but it's inadvisable in most cases since some filesystems are case
+        // sensitive and some are not.
+        .init(bool, .{
+            .long = "allow-uppercase-include-paths",
+            .default = .{ .value = false },
+        }),
     },
     .positional_args = &.{
         .init([:0]const u8, .{
@@ -198,12 +204,25 @@ pub fn main() void {
     defer command.parseFree(args);
 
     const cwd = std.fs.cwd();
-    shader_compiler.compile(allocator, cwd, .{
+
+    const deps_file = if (args.named.@"write-deps") |path| cwd.createFile(path, .{}) catch |err| {
+        log.err("{s}: {s}", .{ path, @errorName(err) });
+        std.process.exit(1);
+    } else null;
+    defer if (deps_file) |f| {
+        f.sync() catch |err| @panic(@errorName(err));
+        f.close();
+    };
+    var deps_buf: [128]u8 = undefined;
+    var discard_deps: std.Io.Writer.Discarding = .init(&deps_buf);
+    var deps_writer = if (deps_file) |f| f.writerStreaming(&deps_buf) else null;
+    const deps = if (deps_writer) |*dw| &dw.interface else &discard_deps.writer;
+
+    const spv = shader_compiler.compile(allocator, cwd, deps, .{
         .compile = .{
             .input_path = args.positional.INPUT,
             .output_path = args.positional.OUTPUT,
             .include_path = args.named.@"include-path".items,
-            .write_deps = args.named.@"write-deps",
             .preamble = args.named.preamble.items,
             .defines = args.named.define.items,
             .default_version = args.named.@"default-version",
@@ -212,6 +231,7 @@ pub fn main() void {
             .spirv_version = args.named.@"spirv-version",
             .stage = args.named.stage,
             .debug = args.named.debug,
+            .allow_uppercase_paths = args.named.@"allow-uppercase-include-paths",
         },
         .remap = args.named.remap,
         .optimize = .{
@@ -245,6 +265,21 @@ pub fn main() void {
             .max_id_bound = args.named.@"max-id-bound",
         },
     }) catch std.process.exit(1);
+    defer shader_compiler.freeSpirv(spv);
+
+    var file = cwd.createFile(args.positional.OUTPUT, .{}) catch |err| {
+        log.err("{s}: {s}", .{ args.positional.OUTPUT, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer {
+        file.sync() catch |err| @panic(@errorName(err));
+        file.close();
+    }
+
+    file.writeAll(std.mem.sliceAsBytes(spv)) catch |err| {
+        log.err("{s}: {s}", .{ args.positional.OUTPUT, @errorName(err) });
+        std.process.exit(1);
+    };
 }
 
 fn logFn(
