@@ -132,7 +132,7 @@ pub fn compile(
             const contents = try openSource(dir, path);
             defer contents.close();
             var contents_reader = contents.readerStreaming(&buf);
-            contents_reader.interface.appendRemaining(gpa, .@"1", &preamble, .unlimited) catch |err| {
+            contents_reader.interface.appendRemaining(gpa, &preamble, .unlimited) catch |err| {
                 if (err == error.OutOfMemory) @panic("OOM");
                 log.err("{s}: {s}", .{ path, @errorName(err) });
                 return error.Compile;
