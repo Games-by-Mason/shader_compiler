@@ -173,6 +173,9 @@ pub fn compile(
         }
         writeDepPath(deps, options.compile.output_path) catch |err| @panic(@errorName(err));
         deps.writeAll(": ") catch |err| @panic(@errorName(err));
+        deps.writeAll("\\\n    ") catch |err| @panic(@errorName(err));
+        writeDepPath(deps, options.compile.input_path) catch |err| @panic(@errorName(err));
+        deps.writeByte(' ') catch |err| @panic(@errorName(err));
     }
 
     const compiled = try compileImpl(gpa, dir, source, preamble, &options, deps);
