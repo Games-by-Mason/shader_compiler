@@ -159,17 +159,21 @@ pub fn compile(
         deps.flush() catch |err| @panic(@errorName(err));
     }
     {
-        // We're being overly conservative by forcing the output path to conform the the GLSL
-        // include path rules, but this makes escaping it in the dep file much simpler. In practice
-        // you are probably asking for trouble if you try to ship paths with other characters
-        // anyway, however if you hit this in a real use case feel free to open an issue and I'll
-        // reconsider!
-        if (!checkPath(
-            "output path",
-            options.compile.output_path,
-            options.compile.allow_uppercase_paths,
-        )) {
-            return error.Compile;
+        // We're being overly conservative, but this prevent us from having to more elaborately
+        // escape the dep file. We don't use check path here as unlike in GLSL, we want to allow
+        // whatever the native path separator is. If you're hitting this error feel free to file an
+        // issue, we can always revisit and add full dep file path escpaing if needed.
+        for (options.compile.output_path) |char| {
+            switch (char) {
+                std.fs.path.sep, 'a'...'z', 'A'...'Z', '-', '_', '0'...'9', '.', ' ' => {},
+                else => {
+                    log.err("{s}: output path contains illegal character: '{c}'", .{
+                        options.compile.output_path,
+                        char,
+                    });
+                    return error.Compile;
+                },
+            }
         }
         writeDepPath(deps, options.compile.output_path) catch |err| @panic(@errorName(err));
         deps.writeAll(": ") catch |err| @panic(@errorName(err));
@@ -863,7 +867,8 @@ fn checkPath(diagnostic: ?[]const u8, path: []const u8, allow_uppercase: bool) b
     return true;
 }
 
-/// Writes a path to a dep file, escaping spaces. Assumes it passes `checkPath`.
+/// Writes a path to a dep file, escaping spaces. Assumes the path contains no characters that
+/// require escaping other than spaces.
 fn writeDepPath(deps: *std.Io.Writer, path: []const u8) !void {
     for (path) |char| {
         if (char == ' ') {
