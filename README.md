@@ -4,6 +4,8 @@ A command line tool that compiles GLSL shaders to SPIRV, and optimizes them usin
 
 Remap is also supported (results in better compression), SPIRV is validated before results are written.
 
+Generated docs available [here](https://docs.gamesbymason.com/shader_compiler/), you can generate up to date docs yourself with `zig build docs`.
+
 # Zig Version
 
 [`main`](https://github.com/Games-by-Mason/shader_compiler/tree/main) loosely tracks Zig master. For support for Zig 0.14.0, use [v1.0.0](https://github.com/Games-by-Mason/shader_compiler/releases/tag/v0.1.0).
