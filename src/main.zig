@@ -6,6 +6,8 @@ const log = std.log.scoped(log_scope);
 
 const shader_compiler = @import("shader_compiler");
 
+const Io = std.Io;
+
 const Allocator = std.mem.Allocator;
 const Command = structopt.Command;
 
@@ -198,6 +200,9 @@ pub fn main() void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
+    var threaded_io: Io.Threaded = .init_single_threaded;
+    const io = threaded_io.io();
+
     var arg_iter = std.process.argsWithAllocator(allocator) catch @panic("OOM");
     defer arg_iter.deinit();
     const args = command.parseOrExit(allocator, &arg_iter);
@@ -218,7 +223,7 @@ pub fn main() void {
     var deps_writer = if (deps_file) |f| f.writerStreaming(&deps_buf) else null;
     const deps = if (deps_writer) |*dw| &dw.interface else &discard_deps.writer;
 
-    const spv = shader_compiler.compile(allocator, cwd, deps, .{
+    const spv = shader_compiler.compile(allocator, io, cwd, deps, .{
         .compile = .{
             .input_path = args.positional.INPUT,
             .output_path = args.positional.OUTPUT,
@@ -288,30 +293,30 @@ fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const bold = "\x1b[1m";
-    const color = switch (message_level) {
-        .err => "\x1b[31m",
-        .info => "\x1b[32m",
-        .debug => "\x1b[34m",
-        .warn => "\x1b[33m",
-    };
-    const reset = "\x1b[0m";
     const level_txt = comptime message_level.asText();
 
     var buffer: [64]u8 = undefined;
-    var stderr = std.debug.lockStderrWriter(&buffer);
+    var stderr, const tty_config = std.debug.lockStderrWriter(&buffer);
     defer std.debug.unlockStderrWriter();
     nosuspend {
         var wrote_prefix = false;
         if (message_level != .info) {
-            stderr.writeAll(bold ++ color ++ level_txt ++ reset) catch return;
+            tty_config.setColor(stderr, .bold) catch {};
+            tty_config.setColor(stderr, switch (message_level) {
+                .err => .red,
+                .warn => .yellow,
+                .info => .green,
+                .debug => .blue,
+            }) catch {};
+            stderr.writeAll(level_txt) catch return;
+            tty_config.setColor(stderr, .reset) catch {};
             wrote_prefix = true;
         }
-        if (message_level == .err) stderr.writeAll(bold) catch return;
+        if (message_level == .err) tty_config.setColor(stderr, .bold) catch {};
         if (wrote_prefix) {
             stderr.writeAll(": ") catch return;
         }
         stderr.print(format ++ "\n", args) catch return;
-        stderr.writeAll(reset) catch return;
+        tty_config.setColor(stderr, .reset) catch {};
     }
 }

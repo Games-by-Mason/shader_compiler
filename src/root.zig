@@ -3,6 +3,8 @@ const log_scope = .shader_compiler;
 const log = std.log.scoped(log_scope);
 const assert = std.debug.assert;
 
+const Io = std.Io;
+
 pub const c = @cImport({
     @cInclude("glslang/Include/glslang_c_interface.h");
     @cInclude("glslang/Public/resource_limits_c.h");
@@ -114,6 +116,7 @@ const max_include_depth = 255;
 
 pub fn compile(
     gpa: Allocator,
+    io: Io,
     dir: Dir,
     deps: *std.Io.Writer,
     options: Options,
@@ -131,7 +134,7 @@ pub fn compile(
         for (options.compile.preamble) |path| {
             const contents = try openSource(dir, path);
             defer contents.close();
-            var contents_reader = contents.readerStreaming(&buf);
+            var contents_reader = contents.readerStreaming(io, &buf);
             contents_reader.interface.appendRemaining(gpa, &preamble, .unlimited) catch |err| {
                 if (err == error.OutOfMemory) @panic("OOM");
                 log.err("{s}: {s}", .{ path, @errorName(err) });
@@ -208,10 +211,7 @@ fn readSource(
     dir: std.fs.Dir,
     path: []const u8,
 ) ![:0]const u8 {
-    var file = try openSource(dir, path);
-    defer file.close();
-
-    return file.readToEndAllocOptions(gpa, max_file_len, null, .@"1", 0) catch |err| {
+    return dir.readFileAllocOptions(path, gpa, .unlimited, .@"1", 0) catch |err| {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         return error.Compile;
     };
@@ -645,40 +645,6 @@ fn writeGlslMessages(
     }
 }
 
-fn logFn(
-    comptime message_level: std.log.Level,
-    comptime _: @TypeOf(.enum_literal),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    const bold = "\x1b[1m";
-    const color = switch (message_level) {
-        .err => "\x1b[31m",
-        .info => "\x1b[32m",
-        .debug => "\x1b[34m",
-        .warn => "\x1b[33m",
-    };
-    const reset = "\x1b[0m";
-    const level_txt = comptime message_level.asText();
-
-    var buffer: [64]u8 = undefined;
-    var stderr = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
-    nosuspend {
-        var wrote_prefix = false;
-        if (message_level != .info) {
-            stderr.writeAll(bold ++ color ++ level_txt ++ reset) catch return;
-            wrote_prefix = true;
-        }
-        if (message_level == .err) stderr.writeAll(bold) catch return;
-        if (wrote_prefix) {
-            stderr.writeAll(": ") catch return;
-        }
-        stderr.print(format ++ "\n", args) catch return;
-        stderr.writeAll(reset) catch return;
-    }
-}
-
 const Callbacks = struct {
     gpa: std.mem.Allocator,
     include_paths: []const []const u8,
@@ -794,17 +760,20 @@ const Callbacks = struct {
         const path = std.fs.path.join(self.gpa, &.{ include_path, header_path }) catch cppPanic("OOM");
         defer self.gpa.free(path);
 
-        // Attempt to open the file
-        const file = self.dir.openFile(path, .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                return null;
-            },
+        // Attempt to read the
+        const source = self.dir.readFileAllocOptions(
+            path,
+            self.gpa,
+            .unlimited,
+            .@"1",
+            0,
+        ) catch |err| switch (err) {
+            error.FileNotFound => return null,
             else => {
                 log.err("{s}: {s}", .{ path, @errorName(err) });
                 return null;
             },
         };
-        defer file.close();
 
         // Write the include path to the deps file
         {
@@ -815,13 +784,6 @@ const Callbacks = struct {
 
         // Return the result
         const result = self.gpa.create(c.glsl_include_result_t) catch cppPanic("OOM");
-        const source = file.readToEndAllocOptions(
-            self.gpa,
-            max_file_len,
-            null,
-            .@"1",
-            0,
-        ) catch |err| cppPanic(@errorName(err));
         result.* = .{
             .header_name = self.gpa.dupeZ(u8, header_path) catch cppPanic("OOM"),
             .header_data = source.ptr,

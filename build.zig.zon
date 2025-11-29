@@ -2,15 +2,15 @@
     .name = .shader_compiler,
     .fingerprint = 0x36d3f5d96a6ce56c,
     .version = "1.1.0",
-    .minimum_zig_version = "0.15.1",
+    .minimum_zig_version = "0.16.0-dev.1484+d0ba6642b",
     .dependencies = .{
         .glslang = .{
             .url = "git+https://github.com/Games-By-Mason/glslang-zig#800e71c1db09bc242ecc7e9fecfad58a2ac958f2",
             .hash = "glslang-1.4.309-eMn68IvGCQDg1sEYYzGKGS1oWPJPclgb7D4IVbPo1OIm",
         },
         .structopt = .{
-            .url = "git+https://github.com/Games-By-Mason/structopt#ca000425f5e1828221ca858dd97a3b407e48be9e",
-            .hash = "structopt-1.0.0-OgtKAiE4AQCpaGqYCWS5aKYlzoeZLQxTAQH8EQJvyS7P",
+            .url = "git+https://github.com/Games-By-Mason/structopt#d2cba72809f3aa41464e2597371ea45078bfada3",
+            .hash = "structopt-1.0.0-OgtKAng7AQDBL7zVfz0Rz4asvZdmOpjrLS2039TH-owI",
         },
     },
     .paths = .{
