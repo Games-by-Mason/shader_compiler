@@ -214,10 +214,7 @@ pub fn main() void {
         log.err("{s}: {s}", .{ path, @errorName(err) });
         std.process.exit(1);
     } else null;
-    defer if (deps_file) |f| {
-        f.sync() catch |err| @panic(@errorName(err));
-        f.close();
-    };
+    defer if (deps_file) |f| f.close();
     var deps_buf: [128]u8 = undefined;
     var discard_deps: std.Io.Writer.Discarding = .init(&deps_buf);
     var deps_writer = if (deps_file) |f| f.writerStreaming(&deps_buf) else null;
@@ -276,10 +273,7 @@ pub fn main() void {
         log.err("{s}: {s}", .{ args.positional.OUTPUT, @errorName(err) });
         std.process.exit(1);
     };
-    defer {
-        file.sync() catch |err| @panic(@errorName(err));
-        file.close();
-    }
+    defer file.close();
 
     file.writeAll(std.mem.sliceAsBytes(spv)) catch |err| {
         log.err("{s}: {s}", .{ args.positional.OUTPUT, @errorName(err) });
