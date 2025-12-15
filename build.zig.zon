@@ -1,16 +1,16 @@
 .{
-    .name = .shader_compiler,
-    .fingerprint = 0x36d3f5d96a6ce56c,
+    .name = .mr_glsl,
+    .fingerprint = 0x2c8efc339055f64e,
     .version = "1.1.0",
     .minimum_zig_version = "0.16.0-dev.1484+d0ba6642b",
     .dependencies = .{
-        .glslang = .{
-            .url = "git+https://github.com/Games-By-Mason/glslang-zig#800e71c1db09bc242ecc7e9fecfad58a2ac958f2",
-            .hash = "glslang-1.4.309-eMn68IvGCQDg1sEYYzGKGS1oWPJPclgb7D4IVbPo1OIm",
+        .mr_structopt = .{
+            .url = "git+https://codeberg.org/Games-by-Mason/mr_structopt.git#13da0f2f5f95ca406af2b0f7cfbb76f33f7b2012",
+            .hash = "mr_structopt-1.0.0-Fb_EBn47AQAloreQHZPEY6g1eNlBraHj5GPJdDEpiW5W",
         },
-        .structopt = .{
-            .url = "git+https://github.com/Games-By-Mason/structopt#d2cba72809f3aa41464e2597371ea45078bfada3",
-            .hash = "structopt-1.0.0-OgtKAng7AQDBL7zVfz0Rz4asvZdmOpjrLS2039TH-owI",
+        .glslang = .{
+            .url = "git+https://codeberg.org/Games-by-Mason/glslang_zig.git#fac0f72448efc01c0f651f5f59a609280ab49e35",
+            .hash = "glslang-1.4.309-eMn68KLGCQDAuHVUzugaYOOEhbkyHmN526R7mHIq9YUs",
         },
     },
     .paths = .{

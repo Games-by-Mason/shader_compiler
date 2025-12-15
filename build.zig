@@ -8,32 +8,32 @@ pub fn build(b: *std.Build) void {
         else => optimize,
     };
 
-    const mod = b.addModule("shader_compiler", .{
+    const mod = b.addModule("mr_glsl", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const exe = b.addExecutable(.{
-        .name = "shader_compiler",
+        .name = "mr_glsl",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
                 .{
-                    .name = "shader_compiler",
+                    .name = "mr_glsl",
                     .module = mod,
                 },
             },
         }),
     });
 
-    const structopt = b.dependency("structopt", .{
+    const structopt = b.dependency("mr_structopt", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("structopt", structopt.module("structopt"));
+    exe.root_module.addImport("mr_structopt", structopt.module("mr_structopt"));
 
     const glslang = b.dependency("glslang", .{
         .target = target,
